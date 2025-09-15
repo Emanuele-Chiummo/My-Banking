@@ -84,8 +84,8 @@ flask --app app run --debug
 - Documentazione API: http://127.0.0.1:5000/apidocs
 
 ### 🔑 Credenziali demo
-Codice Cliente: 123456
-Password: Password123!
+- Codice Cliente: 123456
+- Password: Password123!
 
 ## 📌 Attività future
  - Implementazione funzionalità trasferimento conto corrente - salvadanaio e viceversa
