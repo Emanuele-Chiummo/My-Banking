@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Bank App{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h1 class="h4 mb-0">Ciao, {{ display_name }}  👋</h1>
+</div>
+
+<div class="row g-3">
+  <!-- Conti -->
+  <div class="col-12 col-lg-6">
+    <div class="card shadow-sm border-0 rounded-3">
+      <div class="card-body">
+        <h2 class="h5 mb-3">I tuoi conti</h2>
+        {% if accounts %}
+          <ul class="list-group list-group-flush">
+            {% for a in accounts %}
+              <li class="list-group-item px-0 d-flex justify-content-between align-items-center">
+                <div>
+                  <div class="fw-semibold">{{ a['name'] or a['account_id'] }}</div>
+                  <div class="text-secondary small">{{ a['iban'] }}</div>
+                </div>
+                <div class="text-end">
+                  <div class="fw-semibold">{{ "%.2f"|format(a['balance']) }} {{ a['currency'] }}</div>
+                </div>
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="text-secondary mb-0">Nessun conto presente.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Salvadanaio -->
+  <div class="col-12 col-lg-6">
+    <div class="card shadow-sm border-0 rounded-3">
+      <div class="card-body">
+        <h2 class="h5 mb-3">Salvadanai</h2>
+        {% if piggies %}
+          <ul class="list-group list-group-flush">
+            {% for p in piggies %}
+              <li class="list-group-item px-0 d-flex justify-content-between align-items-center">
+                <div>
+                  <div class="fw-semibold">{{ p['name'] }} <span class="badge text-bg-light">{{ p['status'] }}</span></div>
+                  <div class="text-secondary small">
+                    Obiettivo: {{ "%.2f"|format(p['target_amount'] or 0) }} €
+                  </div>
+                </div>
+                <div class="text-end">
+                  <div class="fw-semibold">{{ "%.2f"|format(p['current_amount'] or 0) }} €</div>
+                </div>
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="text-secondary mb-0">Nessun salvadanaio presente.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Ultime transazioni -->
+  <div class="col-12">
+    <div class="card shadow-sm border-0 rounded-3">
+      <div class="card-body">
+        <h2 class="h5 mb-3">Ultime transazioni</h2>
+        {% if transactions %}
+          <div class="table-responsive">
+            <table class="table align-middle">
+              <thead>
+              <tr>
+                <th>Data</th>
+                <th>Descrizione</th>
+                <th>Categoria</th>
+                <th>Conto</th>
+                <th class="text-end">Importo</th>
+              </tr>
+              </thead>
+              <tbody>
+              {% for t in transactions %}
+                <tr>
+                  <td>{{ t['date'] }}</td>
+                  <td>{{ t['description'] }}</td>
+                  <td>{{ t['category'] }}</td>
+                  <td>{{ t['account_name'] }}</td>
+                  <td class="text-end">
+                    <span class="{{ 'text-success' if t['type']=='CREDIT' else 'text-danger' }}">
+                      {{ "%.2f"|format(t['amount']) }} €
+                    </span>
+                  </td>
+                </tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="text-secondary mb-0">Nessuna transazione recente.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

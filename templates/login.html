@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Login — Bank App{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="card shadow-sm border-0 rounded-3">
+      <div class="card-body p-4">
+        <h1 class="h4 mb-3 text-center">Accesso</h1>
+        <p class="text-secondary small text-center mb-4">
+          Inserisci <strong>codice utente</strong> e <strong>password</strong>.
+        </p>
+        <form method="post" novalidate>
+          <div class="mb-3">
+            <label for="codice_cliente" class="form-label">Codice utente</label>
+            <input type="text" class="form-control" id="codice_cliente" name="codice_cliente"
+                   placeholder="Es. 123456" autocomplete="username" required>
+          </div>
+          <div class="mb-3">
+            <label for="password" class="form-label">Password</label>
+            <input type="password" class="form-control" id="password" name="password"
+                   placeholder="••••••••" autocomplete="current-password" required>
+          </div>
+          <button class="btn btn-primary w-100" type="submit">Entra</button>
+        </form>
+
+        <hr class="my-4">
+        <div class="small text-muted">
+          <strong>Demo</strong><br>
+          Codice: <code>123456</code><br>
+          Password: <code>Password123!</code>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
