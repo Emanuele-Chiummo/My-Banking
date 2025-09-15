@@ -81,8 +81,7 @@ flask --app app run --debug
 ```
 ### 🌐 Accesso ai servizi
 Interfaccia utente: http://127.0.0.1:5000
-
-### Documentazione API: http://127.0.0.1:5000/apidocs
+Documentazione API: http://127.0.0.1:5000/apidocs
 
 ### 🔑 Credenziali demo
 Codice Cliente: 123456
