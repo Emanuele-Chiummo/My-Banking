@@ -2,74 +2,146 @@
 {% block title %}Dashboard — Bank App{% endblock %}
 
 {% block content %}
-<div class="d-flex align-items-center justify-content-between mb-3">
-  <h1 class="h4 mb-0">Ciao, {{ display_name }}  👋</h1>
+<div class="d-flex align-items-center justify-content-between mb-2">
+  <h1 class="h4 mb-0">Ciao, {{ display_name }} 👋</h1>
+  <div class="d-flex gap-2">
+  </div>
 </div>
 
 <div class="row g-3">
-  <!-- Conti -->
-  <div class="col-12 col-lg-6">
-    <div class="card shadow-sm border-0 rounded-3">
-      <div class="card-body">
-        <h2 class="h5 mb-3">I tuoi conti</h2>
-        {% if accounts %}
-          <ul class="list-group list-group-flush">
-            {% for a in accounts %}
-              <li class="list-group-item px-0 d-flex justify-content-between align-items-center">
-                <div>
-                  <div class="fw-semibold">{{ a['name'] or a['account_id'] }}</div>
-                  <div class="text-secondary small">{{ a['iban'] }}</div>
-                </div>
-                <div class="text-end">
-                  <div class="fw-semibold">{{ "%.2f"|format(a['balance']) }} {{ a['currency'] }}</div>
-                </div>
-              </li>
-            {% endfor %}
-          </ul>
-        {% else %}
-          <p class="text-secondary mb-0">Nessun conto presente.</p>
-        {% endif %}
-      </div>
-    </div>
-  </div>
-
-  <!-- Salvadanaio -->
-  <div class="col-12 col-lg-6">
-    <div class="card shadow-sm border-0 rounded-3">
-      <div class="card-body">
-        <h2 class="h5 mb-3">Salvadanai</h2>
-        {% if piggies %}
-          <ul class="list-group list-group-flush">
-            {% for p in piggies %}
-              <li class="list-group-item px-0 d-flex justify-content-between align-items-center">
-                <div>
-                  <div class="fw-semibold">{{ p['name'] }} <span class="badge text-bg-light">{{ p['status'] }}</span></div>
-                  <div class="text-secondary small">
-                    Obiettivo: {{ "%.2f"|format(p['target_amount'] or 0) }} €
-                  </div>
-                </div>
-                <div class="text-end">
-                  <div class="fw-semibold">{{ "%.2f"|format(p['current_amount'] or 0) }} €</div>
-                </div>
-              </li>
-            {% endfor %}
-          </ul>
-        {% else %}
-          <p class="text-secondary mb-0">Nessun salvadanaio presente.</p>
-        {% endif %}
-      </div>
-    </div>
-  </div>
-
-  <!-- Ultime transazioni -->
+  <!-- 1) Card Conto Corrente (full width) -->
   <div class="col-12">
-    <div class="card shadow-sm border-0 rounded-3">
+    <div class="card account-card shadow-sm border-0">
+      <div class="card-body">
+        <div class="d-flex align-items-start justify-content-between">
+          <div>
+            <div class="text-secondary small">Conto corrente</div>
+            {% set main = accounts[0] if accounts else None %}
+            <div class="display-6 fw-bold lh-1 mt-1 money" id="account-balance"
+              data-raw="{{ '%.2f'|format(main['balance']) if main else '0.00' }}"
+              data-currency="{{ main['currency'] if main else 'EUR' }}">
+              {{ "%.2f"|format(main['balance']) if main else "0.00" }} {{ main['currency'] if main else "EUR" }}
+            </div>
+            {% if main %}
+            <div class="text-secondary small mt-1">{{ main['name'] }} • {{ main['iban'] }}</div>
+            {% endif %}
+          </div>
+          <button class="btn btn-light btn-sm rounded-circle toggle-visibility" id="toggle-visibility"
+            aria-pressed="false" aria-label="Mostra/nascondi saldo">
+            <span class="vis-icon">👁️</span>
+          </button>
+        </div>
+        <div class="mt-3">
+          <canvas id="balanceSparkline" height="60"></canvas>
+        </div>
+        <div class="d-flex gap-2 mt-3">
+          <a href="#transactions" class="btn btn-outline-secondary btn-sm">Storico</a>
+          {% if main and piggies %}
+          <button class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalTransfer"
+            data-piggy="{{ piggies[0]['piggy_id'] }}" data-direction="TO_PIGGY"
+            data-current="{{ piggies[0]['current_amount'] or 0 }}">
+            Trasferisci al salvadanaio
+          </button>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2) PATRIMONIO TOTALE (full-width) — spostato subito sotto il conto -->
+  <div class="col-12">
+    <div class="card shadow-sm border-0">
+      <div class="card-body">
+        <div class="d-flex align-items-center justify-content-between">
+          <h2 class="h5 mb-0">Patrimonio totale</h2>
+          <div class="btn-group btn-group-sm" role="group" aria-label="Tipo grafico">
+            <button type="button" class="btn btn-outline-secondary active" id="btnAssetStacked">Barra 100%</button>
+            <button type="button" class="btn btn-outline-secondary" id="btnAssetNone">Nascondi</button>
+          </div>
+        </div>
+        <div id="assetChartWrap" class="mt-3">
+          <canvas id="assetChart" height="220"></canvas>
+        </div>
+        <div id="assetEmpty" class="text-secondary small d-none">Grafico nascosto.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3) Salvadanai -->
+  <div class="col-12">
+    <div class="card shadow-sm border-0">
+      <div class="card-body">
+        <div class="d-flex align-items-center justify-content-between">
+          <h2 class="h5 mb-0">Salvadanai</h2>
+          <button class="btn btn-outline-primary btn-sm" data-bs-toggle="modal"
+            data-bs-target="#modalCreatePiggy">Nuovo</button>
+        </div>
+
+        {% if piggies %}
+        <div class="row row-cols-1 row-cols-md-2 row-cols-xl-3 g-3 mt-1">
+          {% for p in piggies %}
+          <div class="col">
+            <div class="card piggy-card border-0 h-100">
+              <div class="card-body d-flex flex-column">
+                <div class="d-flex align-items-center justify-content-between">
+                  <div class="fw-semibold text-truncate">{{ p['name'] }}</div>
+                  <span class="badge text-bg-light">{{ p['status'] }}</span>
+                </div>
+                <div class="text-secondary small mt-1">
+                  Obiettivo: {{ "%.2f"|format(p['target_amount'] or 0) }} € •
+                  Attuale: <span class="fw-semibold money" data-raw="{{ '%.2f'|format(p['current_amount'] or 0) }}"
+                    data-currency="EUR">{{ "%.2f"|format(p['current_amount'] or 0) }} €</span>
+                </div>
+
+                <!-- Progress senza calcoli Jinja -->
+                <div class="mt-3">
+                  <div class="progress piggy-progress" data-current="{{ p['current_amount'] or 0 }}"
+                    data-target="{{ p['target_amount'] or 0 }}" style="height:8px;">
+                    <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"></div>
+                  </div>
+                  {% if not p['target_amount'] %}
+                  <div class="text-secondary small">Nessun obiettivo impostato</div>
+                  {% endif %}
+                </div>
+
+                <div class="mt-auto d-flex flex-wrap align-items-center gap-3 pt-2 piggy-actions">
+                  <button class="btn btn-outline-success btn-sm" data-bs-toggle="modal" data-bs-target="#modalTransfer"
+                    data-piggy="{{ p['piggy_id'] }}" data-current="{{ p['current_amount'] or 0 }}"
+                    data-direction="TO_PIGGY">
+                    Ricarica
+                  </button>
+                  <button class="btn btn-outline-danger btn-sm" data-bs-toggle="modal" data-bs-target="#modalTransfer"
+                    data-piggy="{{ p['piggy_id'] }}" data-current="{{ p['current_amount'] or 0 }}"
+                    data-direction="FROM_PIGGY">
+                    Preleva
+                  </button>
+                  <button class="btn btn-outline-secondary btn-sm ms-sm-auto" data-bs-toggle="modal"
+                    data-bs-target="#modalDeletePiggy" data-piggy="{{ p['piggy_id'] }}"
+                    data-current="{{ p['current_amount'] or 0 }}">
+                    Elimina
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-secondary mb-0 mt-2">Nessun salvadanaio presente.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- 4) Ultime transazioni -->
+  <div class="col-12" id="transactions">
+    <div class="card shadow-sm border-0">
       <div class="card-body">
         <h2 class="h5 mb-3">Ultime transazioni</h2>
         {% if transactions %}
-          <div class="table-responsive">
-            <table class="table align-middle">
-              <thead>
+        <div class="table-responsive">
+          <table class="table align-middle">
+            <thead>
               <tr>
                 <th>Data</th>
                 <th>Descrizione</th>
@@ -77,29 +149,176 @@
                 <th>Conto</th>
                 <th class="text-end">Importo</th>
               </tr>
-              </thead>
-              <tbody>
+            </thead>
+            <tbody>
               {% for t in transactions %}
-                <tr>
-                  <td>{{ t['date'] }}</td>
-                  <td>{{ t['description'] }}</td>
-                  <td>{{ t['category'] }}</td>
-                  <td>{{ t['account_name'] }}</td>
-                  <td class="text-end">
-                    <span class="{{ 'text-success' if t['type']=='CREDIT' else 'text-danger' }}">
-                      {{ "%.2f"|format(t['amount']) }} €
-                    </span>
-                  </td>
-                </tr>
+              <tr>
+                <td>{{ t['date'] }}</td>
+                <td>{{ t['description'] }}</td>
+                <td>{{ t['category'] }}</td>
+                <td>{{ t['account_name'] }}</td>
+                <td class="text-end">
+                  <span class="money {{ 'text-success' if t['type']=='CREDIT' else 'text-danger' }}"
+                    data-raw="{{ '%.2f'|format(t['amount']) }}" data-currency="EUR">
+                    {{ "%.2f"|format(t['amount']) }} €
+                  </span>
+                </td>
+              </tr>
               {% endfor %}
-              </tbody>
-            </table>
-          </div>
+            </tbody>
+          </table>
+        </div>
         {% else %}
-          <p class="text-secondary mb-0">Nessuna transazione recente.</p>
+        <p class="text-secondary mb-0">Nessuna transazione recente.</p>
         {% endif %}
       </div>
     </div>
   </div>
 </div>
+
+<!-- Modal: Crea salvadanaio -->
+<div class="modal fade" id="modalCreatePiggy" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <form class="modal-content" method="post" action="{{ url_for('web_piggy_create') }}">
+      <div class="modal-header">
+        <h5 class="modal-title">Nuovo salvadanaio</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label">Nome</label>
+          <input type="text" class="form-control" name="name" placeholder="Es. Vacanze 2026" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Obiettivo (facoltativo)</label>
+          <div class="input-group">
+            <input type="number" step="0.01" min="0" class="form-control" name="target_amount"
+              placeholder="Es. 1500.00">
+            <span class="input-group-text">€</span>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" type="button" data-bs-dismiss="modal">Annulla</button>
+        <button class="btn btn-primary" type="submit">Crea</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal: Trasferimento salvadanaio -->
+<div class="modal fade" id="modalTransfer" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <form class="modal-content" method="post" action="{{ url_for('web_piggy_transfer') }}">
+      <div class="modal-header">
+        <h5 class="modal-title">Movimento salvadanaio</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" name="piggy_id" id="transferPiggyId">
+        <input type="hidden" name="direction" id="transferDirection">
+
+        <div class="mb-3">
+          <label class="form-label">Conto di appoggio</label>
+          <select class="form-select" name="account_id" required>
+            {% for a in accounts %}
+            <option value="{{ a['account_id'] }}">{{ a['name'] or a['account_id'] }} — {{ a['iban'] }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label">Importo</label>
+          <div class="input-group">
+            <input id="transferAmount" type="number" step="0.01" min="0.01" class="form-control" name="amount"
+              placeholder="0.00" required>
+            <span class="input-group-text">€</span>
+          </div>
+          <div class="form-text">Usa <strong>Aggiungi</strong> per versare, <strong>Rimuovi</strong> per prelevare.
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label">Data</label>
+          <input type="date" class="form-control" name="date" value="">
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label">Nota (facoltativa)</label>
+          <input type="text" class="form-control" name="note" placeholder="Es. accantonamento mensile">
+        </div>
+
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="create_account_tx" id="createAccountTx" checked>
+          <label class="form-check-label" for="createAccountTx">Registra anche il movimento sul conto</label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" type="button" data-bs-dismiss="modal">Annulla</button>
+        <button class="btn btn-primary" type="submit">Salva movimento</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal: Eliminazione salvadanaio -->
+<div class="modal fade" id="modalDeletePiggy" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <form class="modal-content" method="post" action="{{ url_for('web_piggy_delete') }}">
+      <div class="modal-header">
+        <h5 class="modal-title">Elimina salvadanaio</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" name="piggy_id" id="deletePiggyId">
+        <p class="mb-2">Se ha saldo residuo, verrà riversato sul conto selezionato.</p>
+        <div class="alert alert-info" role="alert">
+          Saldo attuale: <strong id="deletePiggyBalance">0.00 €</strong>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Conto di destinazione</label>
+          <select class="form-select" name="account_id" required>
+            {% for a in accounts %}
+            <option value="{{ a['account_id'] }}">{{ a['name'] or a['account_id'] }} — {{ a['iban'] }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <p class="small text-secondary mb-0">Questa azione non potrà essere annullata.</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" type="button" data-bs-dismiss="modal">Annulla</button>
+        <button class="btn btn-danger" type="submit">Elimina</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Dati per JS -->
+<script id="dash-data" type="application/json">
+{
+  "account": {
+    "name": {{ (main['name']|tojson) if main else 'null' }},
+    "balance": {{ (main['balance']|round(2)) if main else 0 }},
+    "currency": {{ (main['currency']|tojson) if main else '"EUR"' }}
+  },
+  "piggies": [
+    {% for p in piggies %}
+    {"id": {{ p['piggy_id']|tojson }}, "name": {{ p['name']|tojson }},
+     "current": {{ (p['current_amount'] or 0)|round(2) }}, "target": {{ (p['target_amount'] or 0)|round(2) }}}
+    {% if not loop.last %},{% endif %}
+    {% endfor %}
+  ],
+  "transactions": [
+    {% for t in transactions %}
+    {"date": {{ t['date']|tojson }}, "amount": {{ (t['amount']|round(2)) if t['amount'] is not none else 0 }}}
+    {% if not loop.last %},{% endif %}
+    {% endfor %}
+  ]
+}
+</script>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
 {% endblock %}

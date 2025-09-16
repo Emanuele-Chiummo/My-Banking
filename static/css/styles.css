@@ -1,2 +1,95 @@
+/* ========== Base ==========
+   ------------------------- */
 body { background: #f7f8fb; }
 .card { border-radius: 1rem; }
+.table th { font-weight: 600; }
+.alert { transition: opacity .25s ease; }
+
+/* ========== Subnav / Header Pills ==========
+   ------------------------------------------ */
+.bg-subnav { background: #f8f9fb; }                /* fascia sotto la navbar */
+
+.header-nav .nav-link {
+  border-radius: 999px;
+  color: #0d6efd;                                  /* link blu anche da non attivo */
+  font-weight: 500;
+}
+.header-nav .nav-link:hover { color: #0b5ed7; }
+.header-nav .nav-link.active {
+  background: #0d6efd;                             /* evidenza blu sezione corrente */
+  color: #fff !important;
+  box-shadow: 0 1px 2px rgba(13,110,253,.2);
+}
+
+/* (opzionale) evidenza extra per card nella sezione attiva */
+.section-active {
+  border: 1px solid rgba(13,110,253,.2) !important;
+  box-shadow: 0 .25rem .75rem rgba(13,110,253,.08) !important;
+}
+
+
+
+/* ========== Account Card ==========
+   --------------------------------- */
+.account-card {
+  background: linear-gradient(135deg, #f1f6ff 0%, #f7fbff 100%);
+  border: 1px solid #e7f0ff;
+}
+
+/* ========== Money masking / Toggle ==========
+   ------------------------------------------ */
+.money.masked { filter: blur(7px); }
+.toggle-visibility {
+  width: 34px;
+  height: 34px;
+  border: 1px solid #e9ecef;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;                         /* icona centrata */
+}
+
+/* ========== Piggy (salvadanai) ==========
+   -------------------------------------- */
+.piggy-card { background: #fff; border: 1px solid #f0f2f5; }
+.piggy-progress { height: 8px; }
+.badge.text-bg-light {
+  background:#f1f3f5;
+  color:#6c757d;
+  border:1px solid #e9ecef;
+}
+
+/* ========== Patrimonio (grafico) ==========
+   ---------------------------------------- */
+#assetChartWrap { min-height: 220px; }
+
+/* ========== Tipografia card ==========
+   ----------------------------------- */
+.card .h6 { font-weight: 600; }
+
+/* ========== Report: Spese per categoria ==========
+   ----------------------------------------------- */
+/* wrapper del donut più compatto */
+.cat-chart-wrap { max-height: 240px; }
+
+/* legenda compatta con pallino colore */
+#cat-legend li {
+  display:flex;
+  align-items:center;
+  gap:.5rem;
+  margin-bottom:.35rem;
+}
+#cat-legend .dot {
+  width:10px;
+  height:10px;
+  border-radius:50%;
+  display:inline-block;
+}
+
+/* lista importi stretta (una sola definizione) */
+#cat-list .list-group-item { padding: .5rem .75rem; }
+
+/* ========== Responsive tweaks ==========
+   ------------------------------------- */
+@media (max-width: 576px) {
+  .cat-chart-wrap { max-height: 200px; }           /* ancora più compatto su mobile */
+}
