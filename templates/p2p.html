@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}P2P — Bank App{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h1 class="h4 mb-0">Invia denaro (P2P)</h1>
+</div>
+
+<div class="row g-3">
+  <div class="col-12 col-lg-6">
+    <div class="card shadow-sm border-0">
+      <div class="card-body">
+        <!-- action risolta da Jinja, niente Jinja nel JS -->
+        <form id="p2pForm" class="row g-3" action="{{ url_for('api_p2p_send') }}" method="post">
+          <input type="hidden" name="contact_display_name" id="contactDisplayName" value="">
+          <div class="col-12">
+            <label class="form-label">Conto mittente</label>
+            <select class="form-select" name="from_account_id" required>
+              {% for a in accounts %}
+              <option value="{{ a['account_id'] }}">{{ a['name'] or a['account_id'] }} — {{ "%.2f"|format(a['balance']) }} {{ a['currency'] }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="col-12">
+            <label class="form-label">Contatto</label>
+            <select class="form-select" id="contactSelect" name="contact_id" required>
+              {% for c in contacts %}
+              <option value="{{ c['contact_id'] }}">{{ c['display_name'] }}</option>
+              {% endfor %}
+            </select>
+            <div class="form-text">Contatti interni (demo) — invio istantaneo.</div>
+          </div>
+
+          <div class="col-6">
+            <label class="form-label">Importo</label>
+            <div class="input-group">
+              <input type="number" step="0.01" min="0.01" class="form-control" name="amount" required>
+              <span class="input-group-text">€</span>
+            </div>
+          </div>
+
+          <div class="col-12">
+            <label class="form-label">Messaggio (facoltativo)</label>
+            <input type="text" class="form-control" name="message" placeholder="Es. Pranzo di ieri">
+          </div>
+
+          <div class="col-12">
+            <button class="btn btn-primary" type="submit">Invia</button>
+          </div>
+        </form>
+
+        <!-- Toast stack -->
+        <div class="toast-container position-fixed top-0 start-50 translate-middle-x p-3" id="p2pToastStack" style="z-index:1090;"></div>
+
+        <div id="p2pAlert" class="alert d-none mt-3" role="alert"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-6">
+    <div class="card shadow-sm border-0">
+      <div class="card-body">
+        <h2 class="h6">Ultime transazioni P2P (mittente/destinatario)</h2>
+        <div class="table-responsive mt-2">
+          <table class="table table-sm">
+            <thead>
+              <tr>
+                <th>Data</th>
+                <th>Descrizione</th>
+                <th class="text-end">Importo</th>
+              </tr>
+            </thead>
+            <tbody id="p2pTableBody">
+              {% for t in p2p_tx %}
+              <tr>
+                <td>{{ t['date'] }}</td>
+                <td>{{ t['description'] }}</td>
+                <td class="text-end">
+                  <span class="{{ 'text-success' if t['type']=='CREDIT' else 'text-danger' }}">
+                    {{ '%.2f'|format(t['amount']) }} €
+                  </span>
+                </td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="3" class="text-secondary small">Nessun movimento P2P recente.</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/p2p.js') }}"></script>
+{% endblock %}

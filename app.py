@@ -2,9 +2,10 @@ import sqlite3
 import re
 from datetime import date
 from pathlib import Path
+from io import BytesIO
 from flask import (
     Flask, render_template, request, redirect,
-    url_for, session, flash, g, jsonify
+    url_for, session, flash, g, jsonify, send_file
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -49,9 +50,16 @@ def exec_script(sql_text: str):
 
 # --- Helper: ID, ricalcoli, movimenti ---
 def _next_id(prefix: str, table: str, col: str) -> str:
+    """Genera ID testuale incrementale, es. PIG001 → PIG002, gestendo correttamente 3/4/5+ cifre."""
     db = get_db()
     row = db.execute(
-        f"SELECT {col} AS id FROM {table} WHERE {col} LIKE ? ORDER BY {col} DESC LIMIT 1",
+        f"""
+        SELECT {col} AS id
+        FROM {table}
+        WHERE {col} LIKE ?
+        ORDER BY LENGTH({col}) DESC, {col} DESC
+        LIMIT 1
+        """,
         (f"{prefix}%",),
     ).fetchone()
     if not row:
@@ -59,6 +67,104 @@ def _next_id(prefix: str, table: str, col: str) -> str:
     m = re.search(r"(\d+)$", row["id"])
     n = int(m.group(1)) + 1 if m else 1
     return f"{prefix}{n:03d}"
+
+# --- Helpers demo utenti/conti/contatti ---
+def _upsert_user(user_id: str, codice: str, first: str, last: str, pwd: str = "Password123!"):
+    db = get_db()
+    db.execute("""
+        INSERT INTO users (user_id, codice_cliente, first_name, last_name, password_hash)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+          codice_cliente = excluded.codice_cliente,
+          first_name     = excluded.first_name,
+          last_name      = excluded.last_name,
+          password_hash  = excluded.password_hash
+    """, (user_id, codice, first, last, generate_password_hash(pwd)))
+
+def _ensure_account(account_id: str, user_id: str, iban: str, name: str, currency: str = "EUR", balance: float = 0.0):
+    db = get_db()
+    db.execute("""
+        INSERT INTO accounts (account_id, user_id, iban, name, currency, balance)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(account_id) DO NOTHING
+    """, (account_id, user_id, iban, name, currency, float(balance)))
+
+def _ensure_contact_for(owner_user_id: str, target_user_id: str, target_account_id: str, display_name: str):
+    """Crea una voce in rubrica (se assente) dall'owner verso il target."""
+    db = get_db()
+    exists = db.execute("""
+        SELECT 1 FROM contacts
+        WHERE owner_user_id = ? AND target_user_id = ? AND target_account_id = ?
+    """, (owner_user_id, target_user_id, target_account_id)).fetchone()
+    if exists:
+        return
+    contact_id = _next_id("CON", "contacts", "contact_id")
+    db.execute("""
+        INSERT INTO contacts (contact_id, owner_user_id, display_name, target_user_id, target_account_id)
+        VALUES (?, ?, ?, ?, ?)
+    """, (contact_id, owner_user_id, display_name, target_user_id, target_account_id))
+
+@app.cli.command("seed-demo-more-users")
+def seed_demo_more_users():
+    """
+    Crea altri utenti/conti di test e li aggiunge alla rubrica di USE001 per il P2P.
+    Utenti creati/aggiornati:
+      - USE002 Mario Rossi (ACC002)
+      - USE003 Lucia Bianchi (ACC003)
+      - USE004 Giuseppe Verdi (ACC004)
+      - USE005 Chiara Neri (ACC005)
+    """
+    db = get_db()
+
+    # Assicura l'utente principale (USE001) esista, servirà come "owner" rubrica
+    owner = db.execute("SELECT user_id, first_name, last_name FROM users WHERE user_id='USE001'").fetchone()
+    if not owner:
+        _upsert_user("USE001", "123456", "Emanuele", "Chiummo")
+        owner = db.execute("SELECT user_id, first_name, last_name FROM users WHERE user_id='USE001'").fetchone()
+    owner_name = f"{owner['first_name']} {owner['last_name']}".strip()
+
+    users = [
+        # USE002 potrebbe già esistere (seed-demo-p2p), la upsert lo gestisce
+        dict(user_id="USE002", codice="654321", first="Mario",    last="Rossi",
+             acc="ACC002", iban="IT60X0542811101000000654321", acc_name="Conto Mario",    balance=500.00),
+        dict(user_id="USE003", codice="111222", first="Lucia",    last="Bianchi",
+             acc="ACC003", iban="IT60X0542811101000000003003", acc_name="Conto Lucia",    balance=820.00),
+        dict(user_id="USE004", codice="333444", first="Giuseppe", last="Verdi",
+             acc="ACC004", iban="IT60X0542811101000000004004", acc_name="Conto Giuseppe", balance=125.50),
+        dict(user_id="USE005", codice="555666", first="Chiara",   last="Neri",
+             acc="ACC005", iban="IT60X0542811101000000005005", acc_name="Conto Chiara",   balance=2100.00),
+    ]
+
+    # Crea/aggiorna utenti e conti
+    for u in users:
+        _upsert_user(u["user_id"], u["codice"], u["first"], u["last"])
+        _ensure_account(u["acc"], u["user_id"], u["iban"], u["acc_name"], "EUR", u["balance"])
+
+    # Aggiungi i nuovi utenti alla rubrica di USE001
+    for u in users:
+        display = f"{u['first']} {u['last']}"
+        _ensure_contact_for(owner_user_id="USE001",
+                            target_user_id=u["user_id"],
+                            target_account_id=u["acc"],
+                            display_name=display)
+
+
+    acc_001 = db.execute("""
+        SELECT account_id, name FROM accounts
+        WHERE user_id='USE001'
+        ORDER BY created_at DESC LIMIT 1
+    """).fetchone()
+    if acc_001:
+        for u in users:
+            _ensure_contact_for(owner_user_id=u["user_id"],
+                                target_user_id="USE001",
+                                target_account_id=acc_001["account_id"],
+                                display_name=owner_name)
+
+    db.commit()
+    print("✅ seed-demo-more-users: creati/aggiornati USE002..USE005, conti e rubrica aggiornata.")
+
+
 
 def _get_piggy_balance(piggy_id: str) -> float:
     """Ritorna il saldo reale del salvadanaio calcolato dalle movimentazioni."""
@@ -133,6 +239,73 @@ def _insert_piggy_transfer(*, piggy_id: str, account_id: str, amount: float,
 
     db.commit()
     return transfer_id
+
+def _ensure_contact(owner_user_id: str, contact_id: str):
+    db = get_db()
+    return db.execute("""
+        SELECT contact_id, owner_user_id, display_name, target_user_id, target_account_id, iban
+        FROM contacts
+        WHERE owner_user_id = ? AND contact_id = ?
+    """, (owner_user_id, contact_id)).fetchone()
+
+def _p2p_instant(*, from_account_id: str, to_account_id: str, amount: float,
+                 message: str | None, from_user_id: str, to_user_id: str,
+                 to_name: str | None = None, from_name: str | None = None):
+    """Trasferimento interno istantaneo: crea 2 transazioni e aggiorna saldi."""
+    if amount <= 0:
+        raise ValueError("Importo non valido")
+    db = get_db()
+
+    # verifica saldo sufficiente
+    bal = db.execute("SELECT balance FROM accounts WHERE account_id = ?", (from_account_id,)).fetchone()
+    if not bal:
+        raise ValueError("Conto mittente non trovato")
+    if float(bal["balance"] or 0) < amount - 1e-9:
+        raise ValueError("Saldo insufficiente")
+
+    p2p_id = _next_id("P2P", "p2p_transfers", "p2p_id")
+    today  = date.today().isoformat()
+
+    desc_out = f"P2P a {to_name or ('utente ' + to_user_id)}"
+    desc_in  = f"P2P da {from_name or ('utente ' + from_user_id)}"
+    if message:
+        desc_out += f" — {message}"
+        desc_in  += f" — {message}"
+
+    try:
+        # Avvia transazione esplicita
+        db.execute("BEGIN")
+
+        # 1) Mittente: DEBIT (subito dopo genero e INSERISCO)
+        tx_out = _next_id("TRX", "transactions", "transaction_id")
+        db.execute("""
+            INSERT INTO transactions (transaction_id, account_id, piggy_id, date, description, category, type, amount)
+            VALUES (?, ?, NULL, ?, ?, 'P2P', 'DEBIT', ?)
+        """, (tx_out, from_account_id, today, desc_out, -abs(float(amount))))
+        _apply_account_delta(from_account_id, -abs(float(amount)))
+
+        # 2) Destinatario: CREDIT (genera ID SOLO ORA, dopo il primo insert)
+        tx_in = _next_id("TRX", "transactions", "transaction_id")
+        db.execute("""
+            INSERT INTO transactions (transaction_id, account_id, piggy_id, date, description, category, type, amount)
+            VALUES (?, ?, NULL, ?, ?, 'P2P', 'CREDIT', ?)
+        """, (tx_in, to_account_id, today, desc_in, abs(float(amount))))
+        _apply_account_delta(to_account_id, abs(float(amount)))
+
+        # 3) Record P2P
+        db.execute("""
+            INSERT INTO p2p_transfers (p2p_id, from_user_id, to_user_id, from_account_id, to_account_id, amount, message)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (p2p_id, from_user_id, to_user_id, from_account_id, to_account_id, float(amount), message))
+
+        db.commit()
+        return p2p_id
+
+    except Exception:
+        db.rollback()
+        raise
+
+
 
 
 # --- CLI: init-db & seed-demo & seed-demo-data ---
@@ -456,6 +629,29 @@ def seed_demo_12m():
     _recalc_piggy(piggy_id)
     db.commit()
     print(f"✅ Dati demo ultimi 12 mesi generati su {account_id}. Saldo base ~{base_opening}€, piggy ricalcolato.")
+
+@app.cli.command("seed-demo-p2p")
+def seed_demo_p2p_cmd():
+    """Crea un secondo utente + account e un contatto in rubrica per USE001."""
+    db = get_db()
+    # utente 2
+    u2 = db.execute("SELECT 1 FROM users WHERE user_id='USE002'").fetchone()
+    if not u2:
+        db.execute("""INSERT INTO users (user_id, codice_cliente, first_name, last_name, password_hash)
+                      VALUES ('USE002', '654321', 'Mario', 'Rossi', ?)""",
+                   (generate_password_hash("Password123!"),))
+    a2 = db.execute("SELECT 1 FROM accounts WHERE account_id='ACC002'").fetchone()
+    if not a2:
+        db.execute("""INSERT INTO accounts (account_id, user_id, iban, name, currency, balance)
+                      VALUES ('ACC002','USE002','IT60X0542811101000000654321','Conto Mario','EUR',500.00)""")
+    # contatto in rubrica per USE001 che punta a ACC002
+    c1 = db.execute("SELECT 1 FROM contacts WHERE contact_id='CON001' AND owner_user_id='USE001'").fetchone()
+    if not c1:
+        db.execute("""INSERT INTO contacts (contact_id, owner_user_id, display_name, target_user_id, target_account_id)
+                      VALUES ('CON001','USE001','Mario Rossi','USE002','ACC002')""")
+    db.commit()
+    print("✅ seed-demo-p2p: creati USE002/ACC002 e contatto CON001 per USE001.")
+
 
 
 # --- Auth Utils ---
@@ -909,7 +1105,7 @@ def api_piggy_transfer():
     db.commit()
     return jsonify({"message": "ok"})
 
-# --- NEW: API elimina salvadanaio ---
+# --- API elimina salvadanaio ---
 @app.delete("/api/piggy/<piggy_id>")
 @swag_from({
     "summary": "Elimina un salvadanaio",
@@ -946,6 +1142,74 @@ def api_piggy_delete(piggy_id):
     db.execute("UPDATE piggy_banks SET status = 'DELETED' WHERE piggy_id = ? AND user_id = ?", (piggy_id, session["user_id"]))
     db.commit()
     return jsonify({"message": "deleted"})
+
+@app.get("/api/contacts")
+@swag_from({"summary": "Rubrica contatti P2P", "tags": ["P2P"]})
+def api_contacts():
+    if not session.get("user_id"):
+        return jsonify({"message": "unauthenticated"}), 401
+    q = (request.args.get("q") or "").strip()
+    params = [session["user_id"]]
+    where = ["owner_user_id = ?"]
+    if q:
+        where.append("display_name LIKE ?")
+        params.append(f"%{q}%")
+    db = get_db()
+    rows = db.execute(f"""
+        SELECT contact_id, display_name, target_user_id, target_account_id, iban
+        FROM contacts WHERE {' AND '.join(where)}
+        ORDER BY created_at DESC
+    """, params).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+@app.post("/api/p2p/send")
+@swag_from({"summary": "Invio P2P interno istantaneo", "tags": ["P2P"], "requestBody": {"required": True}})
+def api_p2p_send():
+    if not session.get("user_id"):
+        return jsonify({"message": "unauthenticated"}), 401
+
+    data = request.get_json(silent=True) or {}
+    from_account_id = data.get("from_account_id")
+    contact_id = data.get("contact_id")
+    amount = data.get("amount")
+    message = data.get("message") or None
+    to_name = (data.get("contact_display_name") or "").strip() or None  # <-- qui
+
+    if not from_account_id or not contact_id or amount is None:
+        return jsonify({"message": "campi richiesti: from_account_id, contact_id, amount"}), 400
+    try:
+        amount = float(amount)
+    except (TypeError, ValueError):
+        return jsonify({"message": "amount non valido"}), 400
+
+    contact = _ensure_contact(session["user_id"], contact_id)
+    if not contact or not contact["target_user_id"] or not contact["target_account_id"]:
+        return jsonify({"message": "contatto non valido o non interno"}), 400
+    if amount <= 0:
+        return jsonify({"message": "importo deve essere positivo"}), 400
+
+    db = get_db()
+    owner = db.execute("SELECT user_id FROM accounts WHERE account_id = ?", (from_account_id,)).fetchone()
+    if not owner or owner["user_id"] != session["user_id"]:
+        return jsonify({"message": "conto mittente non valido"}), 400
+    if contact["target_user_id"] == session["user_id"]:
+        return jsonify({"message": "non puoi inviare a te stess*"}), 400
+
+    try:
+        p2p_id = _p2p_instant(
+            from_account_id=from_account_id,
+            to_account_id=contact["target_account_id"],
+            amount=amount,
+            message=message,
+            from_user_id=session["user_id"],
+            to_user_id=contact["target_user_id"],
+            to_name=to_name,
+            from_name=session.get("display_name")  # opzionale
+        )
+        return jsonify({"message": "ok", "p2p_id": p2p_id, "to_name": to_name, "amount": amount})
+    except ValueError as e:
+        return jsonify({"message": str(e)}), 400
+
 
 # --- REPORT HELPERS ---
 from datetime import datetime, timedelta
@@ -1086,7 +1350,36 @@ def api_report_summary():
     data = _report_summary(session['user_id'], months=months_int)
     return jsonify(data)
 
-    
+
+# --- P2P ROUTES ---
+@app.route("/p2p")
+@login_required
+def p2p():
+    db = get_db()
+    user_id = session["user_id"]
+    accounts = db.execute("""
+        SELECT account_id, name, iban, currency, balance
+        FROM accounts
+        WHERE user_id = ?
+        ORDER BY created_at DESC
+    """, (user_id,)).fetchall()
+    contacts = db.execute("""
+        SELECT contact_id, display_name, target_user_id, target_account_id
+        FROM contacts
+        WHERE owner_user_id = ?
+        ORDER BY created_at DESC
+    """, (user_id,)).fetchall()
+    # ultimi movimenti P2P (sia in entrata che in uscita, label via categoria P2P)
+    p2p_tx = db.execute("""
+        SELECT date, description, type, amount
+        FROM transactions t
+        JOIN accounts a ON a.account_id = t.account_id
+        WHERE a.user_id = ? AND t.category = 'P2P'
+        ORDER BY date DESC, t.created_at DESC
+        LIMIT 10
+    """, (user_id,)).fetchall()
+    return render_template("p2p.html", accounts=accounts, contacts=contacts, p2p_tx=p2p_tx)
+
 
 # --- Avvio ---
 if __name__ == '__main__':

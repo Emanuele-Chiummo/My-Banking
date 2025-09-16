@@ -63,6 +63,35 @@ CREATE TABLE IF NOT EXISTS transactions (
   FOREIGN KEY (piggy_id)  REFERENCES piggy_banks(piggy_id) ON DELETE SET NULL
 );
 
+-- Contatti P2P dell'utente (rubrica)
+CREATE TABLE IF NOT EXISTS contacts (
+  contact_id      TEXT PRIMARY KEY,
+  owner_user_id   TEXT NOT NULL,              -- l'utente loggato
+  display_name    TEXT NOT NULL,
+  target_user_id  TEXT,                       -- se contatto è un utente interno
+  target_account_id TEXT,                     -- account di destinazione (interno)
+  iban            TEXT,                       -- per futuri invii esterni (demo)
+  created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (owner_user_id) REFERENCES users(user_id)
+);
+
+-- Trasferimenti P2P interni (istantanei)
+CREATE TABLE IF NOT EXISTS p2p_transfers (
+  p2p_id           TEXT PRIMARY KEY,
+  from_user_id     TEXT NOT NULL,
+  to_user_id       TEXT NOT NULL,
+  from_account_id  TEXT NOT NULL,
+  to_account_id    TEXT NOT NULL,
+  amount           REAL NOT NULL,            -- positivo (es. 25.00)
+  currency         TEXT NOT NULL DEFAULT 'EUR',
+  message          TEXT,
+  created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (from_user_id) REFERENCES users(user_id),
+  FOREIGN KEY (to_user_id) REFERENCES users(user_id),
+  FOREIGN KEY (from_account_id) REFERENCES accounts(account_id),
+  FOREIGN KEY (to_account_id) REFERENCES accounts(account_id)
+);
+
 -- Indici utili
 CREATE INDEX IF NOT EXISTS idx_accounts_user ON accounts(user_id);
 CREATE INDEX IF NOT EXISTS idx_piggy_user    ON piggy_banks(user_id);
