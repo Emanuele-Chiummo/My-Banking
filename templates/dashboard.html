@@ -28,7 +28,7 @@
           </div>
           <button class="btn btn-light btn-sm rounded-circle toggle-visibility" id="toggle-visibility"
             aria-pressed="false" aria-label="Mostra/nascondi saldo">
-            <span class="vis-icon">👁️</span>
+            <i class="bi bi-eye" aria-hidden="true"></i>
           </button>
         </div>
         <div class="mt-3">
@@ -37,11 +37,6 @@
         <div class="d-flex gap-2 mt-3">
           <a href="#transactions" class="btn btn-outline-secondary btn-sm">Storico</a>
           {% if main and piggies %}
-          <button class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalTransfer"
-            data-piggy="{{ piggies[0]['piggy_id'] }}" data-direction="TO_PIGGY"
-            data-current="{{ piggies[0]['current_amount'] or 0 }}">
-            Trasferisci al salvadanaio
-          </button>
           {% endif %}
         </div>
       </div>
@@ -133,13 +128,96 @@
     </div>
   </div>
 
-  <!-- 4) Ultime transazioni -->
+  <!-- 4) Transazioni (filtri sotto con collapse) -->
   <div class="col-12" id="transactions">
     <div class="card shadow-sm border-0">
       <div class="card-body">
-        <h2 class="h5 mb-3">Ultime transazioni</h2>
-        {% if transactions %}
-        <div class="table-responsive">
+        <div class="d-flex align-items-center justify-content-between">
+          <div class="d-flex align-items-center gap-2">
+            <!-- Bottone imbuto: apre/chiude il pannello filtri -->
+            <button class="btn btn-outline-secondary btn-sm" data-bs-toggle="collapse"
+              data-bs-target="#txFiltersCollapse" aria-expanded="false" aria-controls="txFiltersCollapse">
+              <i class="bi bi-funnel"></i>
+            </button>
+            <h2 class="h5 mb-0">Transazioni
+              <span id="txFilterDot" class="ms-2 text-primary d-none" aria-label="Filtri attivi">●</span>
+            </h2>
+          </div>
+        </div>
+
+        <!-- Pannello filtri a comparsa sotto il titolo -->
+        <div class="collapse" id="txFiltersCollapse">
+          <div class="filters-card rounded-3 p-3 mt-3">
+            <div class="row g-2 align-items-end">
+              <div class="col-12 col-md-4">
+                <label class="form-label small" for="txSearch">Cerca</label>
+                <input type="search" id="txSearch" class="form-control form-control-sm"
+                  placeholder="Descrizione o categoria">
+              </div>
+              <div class="col-6 col-md-2">
+                <label class="form-label small" for="txType">Tipo</label>
+                <select id="txType" class="form-select form-select-sm">
+                  <option value="">Tutto</option>
+                  <option value="CREDIT">Entrate</option>
+                  <option value="DEBIT">Uscite</option>
+                </select>
+              </div>
+              <div class="col-6 col-md-2">
+                <label class="form-label small" for="txAccount">Conto</label>
+                <select id="txAccount" class="form-select form-select-sm">
+                  <option value="">Tutti</option>
+                  {% for a in accounts %}
+                  <option value="{{ a['account_id'] }}">{{ a['name'] or a['account_id'] }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-6 col-md-2">
+                <label class="form-label small" for="txFrom">Dal</label>
+                <input type="date" id="txFrom" class="form-control form-control-sm">
+              </div>
+              <div class="col-6 col-md-2">
+                <label class="form-label small" for="txTo">Al</label>
+                <input type="date" id="txTo" class="form-control form-control-sm">
+              </div>
+
+              <div class="col-6 col-md-2">
+                <label class="form-label small" for="txSort">Ordina per</label>
+                <select id="txSort" class="form-select form-select-sm">
+                  <option value="date" selected>Data</option>
+                  <option value="amount">Importo</option>
+                  <option value="description">Descrizione</option>
+                  <option value="category">Categoria</option>
+                </select>
+              </div>
+              <div class="col-6 col-md-2">
+                <label class="form-label small" for="txOrder">Ordine</label>
+                <select id="txOrder" class="form-select form-select-sm">
+                  <option value="desc" selected>↓</option>
+                  <option value="asc">↑</option>
+                </select>
+              </div>
+              <div class="col-6 col-md-2">
+                <label class="form-label small" for="txLimit">Limite</label>
+                <select id="txLimit" class="form-select form-select-sm">
+                  <option>10</option>
+                  <option selected>50</option>
+                  <option>100</option>
+                  <option>200</option>
+                </select>
+              </div>
+
+              <div class="col-12 col-md-3 d-grid">
+                <button id="txApply" class="btn btn-primary btn-sm">Applica</button>
+              </div>
+              <div class="col-12 col-md-3 d-grid">
+                <button id="txReset" class="btn btn-outline-secondary btn-sm">Reset</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tabella -->
+        <div class="table-responsive mt-3">
           <table class="table align-middle">
             <thead>
               <tr>
@@ -150,151 +228,143 @@
                 <th class="text-end">Importo</th>
               </tr>
             </thead>
-            <tbody>
-              {% for t in transactions %}
-              <tr>
-                <td>{{ t['date'] }}</td>
-                <td>{{ t['description'] }}</td>
-                <td>{{ t['category'] }}</td>
-                <td>{{ t['account_name'] }}</td>
-                <td class="text-end">
-                  <span class="money {{ 'text-success' if t['type']=='CREDIT' else 'text-danger' }}"
-                    data-raw="{{ '%.2f'|format(t['amount']) }}" data-currency="EUR">
-                    {{ "%.2f"|format(t['amount']) }} €
-                  </span>
-                </td>
-              </tr>
-              {% endfor %}
-            </tbody>
+            <tbody id="txTbody"><!-- popolato da JS --></tbody>
           </table>
         </div>
-        {% else %}
-        <p class="text-secondary mb-0">Nessuna transazione recente.</p>
-        {% endif %}
+        <div class="d-flex align-items-center justify-content-between mt-2">
+          <div id="txRangeLabel" class="small text-secondary">—</div>
+          <div class="btn-group">
+            <button id="txPrev" class="btn btn-outline-secondary btn-sm" disabled>&laquo; Precedenti</button>
+            <button id="txNext" class="btn btn-outline-secondary btn-sm" disabled>Successive &raquo;</button>
+          </div>
+        </div>
+        <div id="txEmpty" class="text-secondary small d-none">Nessuna transazione trovata.</div>
       </div>
     </div>
   </div>
-</div>
 
-<!-- Modal: Crea salvadanaio -->
-<div class="modal fade" id="modalCreatePiggy" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog">
-    <form class="modal-content" method="post" action="{{ url_for('web_piggy_create') }}">
-      <div class="modal-header">
-        <h5 class="modal-title">Nuovo salvadanaio</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
-      </div>
-      <div class="modal-body">
-        <div class="mb-3">
-          <label class="form-label">Nome</label>
-          <input type="text" class="form-control" name="name" placeholder="Es. Vacanze 2026" required>
+
+
+
+  <!-- Modal: Crea salvadanaio -->
+  <div class="modal fade" id="modalCreatePiggy" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <form class="modal-content" method="post" action="{{ url_for('web_piggy_create') }}">
+        <div class="modal-header">
+          <h5 class="modal-title">Nuovo salvadanaio</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
         </div>
-        <div class="mb-3">
-          <label class="form-label">Obiettivo (facoltativo)</label>
-          <div class="input-group">
-            <input type="number" step="0.01" min="0" class="form-control" name="target_amount"
-              placeholder="Es. 1500.00">
-            <span class="input-group-text">€</span>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label">Nome</label>
+            <input type="text" class="form-control" name="name" placeholder="Es. Vacanze 2026" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Obiettivo (facoltativo)</label>
+            <div class="input-group">
+              <input type="number" step="0.01" min="0" class="form-control" name="target_amount"
+                placeholder="Es. 1500.00">
+              <span class="input-group-text">€</span>
+            </div>
           </div>
         </div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" type="button" data-bs-dismiss="modal">Annulla</button>
-        <button class="btn btn-primary" type="submit">Crea</button>
-      </div>
-    </form>
-  </div>
-</div>
-
-<!-- Modal: Trasferimento salvadanaio -->
-<div class="modal fade" id="modalTransfer" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog">
-    <form class="modal-content" method="post" action="{{ url_for('web_piggy_transfer') }}">
-      <div class="modal-header">
-        <h5 class="modal-title">Movimento salvadanaio</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
-      </div>
-      <div class="modal-body">
-        <input type="hidden" name="piggy_id" id="transferPiggyId">
-        <input type="hidden" name="direction" id="transferDirection">
-
-        <div class="mb-3">
-          <label class="form-label">Conto di appoggio</label>
-          <select class="form-select" name="account_id" required>
-            {% for a in accounts %}
-            <option value="{{ a['account_id'] }}">{{ a['name'] or a['account_id'] }} — {{ a['iban'] }}</option>
-            {% endfor %}
-          </select>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" type="button" data-bs-dismiss="modal">Annulla</button>
+          <button class="btn btn-primary" type="submit">Crea</button>
         </div>
+      </form>
+    </div>
+  </div>
 
-        <div class="mb-3">
-          <label class="form-label">Importo</label>
-          <div class="input-group">
-            <input id="transferAmount" type="number" step="0.01" min="0.01" class="form-control" name="amount"
-              placeholder="0.00" required>
-            <span class="input-group-text">€</span>
+  <!-- Modal: Trasferimento salvadanaio -->
+  <div class="modal fade" id="modalTransfer" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <form class="modal-content" method="post" action="{{ url_for('web_piggy_transfer') }}">
+        <div class="modal-header">
+          <h5 class="modal-title">Movimento salvadanaio</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" name="piggy_id" id="transferPiggyId">
+          <input type="hidden" name="direction" id="transferDirection">
+
+          <div class="mb-3">
+            <label class="form-label">Conto di appoggio</label>
+            <select class="form-select" name="account_id" required>
+              {% for a in accounts %}
+              <option value="{{ a['account_id'] }}">{{ a['name'] or a['account_id'] }} — {{ a['iban'] }}</option>
+              {% endfor %}
+            </select>
           </div>
-          <div class="form-text">Usa <strong>Aggiungi</strong> per versare, <strong>Rimuovi</strong> per prelevare.
+
+          <div class="mb-3">
+            <label class="form-label">Importo</label>
+            <div class="input-group">
+              <input id="transferAmount" type="number" step="0.01" min="0.01" class="form-control" name="amount"
+                placeholder="0.00" required>
+              <span class="input-group-text">€</span>
+            </div>
+            <div class="form-text">Usa <strong>Aggiungi</strong> per versare, <strong>Rimuovi</strong> per prelevare.
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Data</label>
+            <input type="date" class="form-control" name="date" value="">
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Nota (facoltativa)</label>
+            <input type="text" class="form-control" name="note" placeholder="Es. accantonamento mensile">
+          </div>
+
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="create_account_tx" id="createAccountTx" checked>
+            <label class="form-check-label" for="createAccountTx">Registra anche il movimento sul conto</label>
           </div>
         </div>
-
-        <div class="mb-3">
-          <label class="form-label">Data</label>
-          <input type="date" class="form-control" name="date" value="">
+        <div class="modal-footer">
+          <button class="btn btn-secondary" type="button" data-bs-dismiss="modal">Annulla</button>
+          <button class="btn btn-primary" type="submit">Salva movimento</button>
         </div>
-
-        <div class="mb-3">
-          <label class="form-label">Nota (facoltativa)</label>
-          <input type="text" class="form-control" name="note" placeholder="Es. accantonamento mensile">
-        </div>
-
-        <div class="form-check">
-          <input class="form-check-input" type="checkbox" name="create_account_tx" id="createAccountTx" checked>
-          <label class="form-check-label" for="createAccountTx">Registra anche il movimento sul conto</label>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" type="button" data-bs-dismiss="modal">Annulla</button>
-        <button class="btn btn-primary" type="submit">Salva movimento</button>
-      </div>
-    </form>
+      </form>
+    </div>
   </div>
-</div>
 
-<!-- Modal: Eliminazione salvadanaio -->
-<div class="modal fade" id="modalDeletePiggy" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog">
-    <form class="modal-content" method="post" action="{{ url_for('web_piggy_delete') }}">
-      <div class="modal-header">
-        <h5 class="modal-title">Elimina salvadanaio</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
-      </div>
-      <div class="modal-body">
-        <input type="hidden" name="piggy_id" id="deletePiggyId">
-        <p class="mb-2">Se ha saldo residuo, verrà riversato sul conto selezionato.</p>
-        <div class="alert alert-info" role="alert">
-          Saldo attuale: <strong id="deletePiggyBalance">0.00 €</strong>
+  <!-- Modal: Eliminazione salvadanaio -->
+  <div class="modal fade" id="modalDeletePiggy" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <form class="modal-content" method="post" action="{{ url_for('web_piggy_delete') }}">
+        <div class="modal-header">
+          <h5 class="modal-title">Elimina salvadanaio</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Chiudi"></button>
         </div>
-        <div class="mb-3">
-          <label class="form-label">Conto di destinazione</label>
-          <select class="form-select" name="account_id" required>
-            {% for a in accounts %}
-            <option value="{{ a['account_id'] }}">{{ a['name'] or a['account_id'] }} — {{ a['iban'] }}</option>
-            {% endfor %}
-          </select>
+        <div class="modal-body">
+          <input type="hidden" name="piggy_id" id="deletePiggyId">
+          <p class="mb-2">Se ha saldo residuo, verrà riversato sul conto selezionato.</p>
+          <div class="alert alert-info" role="alert">
+            Saldo attuale: <strong id="deletePiggyBalance">0.00 €</strong>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Conto di destinazione</label>
+            <select class="form-select" name="account_id" required>
+              {% for a in accounts %}
+              <option value="{{ a['account_id'] }}">{{ a['name'] or a['account_id'] }} — {{ a['iban'] }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <p class="small text-secondary mb-0">Questa azione non potrà essere annullata.</p>
         </div>
-        <p class="small text-secondary mb-0">Questa azione non potrà essere annullata.</p>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" type="button" data-bs-dismiss="modal">Annulla</button>
-        <button class="btn btn-danger" type="submit">Elimina</button>
-      </div>
-    </form>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" type="button" data-bs-dismiss="modal">Annulla</button>
+          <button class="btn btn-danger" type="submit">Elimina</button>
+        </div>
+      </form>
+    </div>
   </div>
-</div>
 
-<!-- Dati per JS -->
-<script id="dash-data" type="application/json">
+  <!-- Dati per JS -->
+  <script id="dash-data" type="application/json">
 {
   "account": {
     "name": {{ (main['name']|tojson) if main else 'null' }},
@@ -316,9 +386,10 @@
   ]
 }
 </script>
-{% endblock %}
+  {% endblock %}
 
-{% block scripts %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
-{% endblock %}
+  {% block scripts %}
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/transactions.js') }}"></script>
+  {% endblock %}

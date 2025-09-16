@@ -27,8 +27,6 @@ body { background: #f7f8fb; }
   box-shadow: 0 .25rem .75rem rgba(13,110,253,.08) !important;
 }
 
-
-
 /* ========== Account Card ==========
    --------------------------------- */
 .account-card {
@@ -84,6 +82,14 @@ body { background: #f7f8fb; }
   border-radius:50%;
   display:inline-block;
 }
+
+/* Occhi toggle */
+#toggle-asset-visibility { width:34px; height:34px; border:1px solid #e9ecef; }
+
+/* Sfocatura quando nascosto */
+#assetChartWrap.masked { filter: blur(8px); pointer-events:none; }
+
+
 
 /* lista importi stretta (una sola definizione) */
 #cat-list .list-group-item { padding: .5rem .75rem; }

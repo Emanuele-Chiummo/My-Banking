@@ -240,13 +240,20 @@ def _rand_day(year: int, month: int, preferred: int | None = None):
     last_day = calendar.monthrange(year, month)[1]
     if preferred and 1 <= preferred <= last_day:
         return preferred
-    # Evita giorni 29-31 se mese corto
-    day = random.randint(2, min(last_day, 28))
-    # Evita domenica (0 lun, 6 dom -> usiamo weekday: 0 lun, 6 dom)
+    day = random.randint(2, min(last_day, 28))   # evita 29-31
     dt = date_cls(year, month, day)
-    if dt.weekday() == 6:
+    if dt.weekday() == 6:                         # evita domenica
         day = max(2, day - 1)
     return day
+
+def _safe_day(y: int, m: int, d: int) -> int:
+    """Rende il giorno valido nel mese e MAI futuro se è il mese corrente."""
+    last = calendar.monthrange(y, m)[1]
+    d = max(1, min(d, last))
+    today = date_cls.today()
+    if y == today.year and m == today.month:
+        d = min(d, today.day)
+    return d
 
 def _add_tx(*, account_id: str, y: int, m: int, d: int, desc: str,
             category: str, ttype: str, amount: float, piggy_id: str | None = None):
@@ -254,6 +261,7 @@ def _add_tx(*, account_id: str, y: int, m: int, d: int, desc: str,
     assert ttype in ("DEBIT", "CREDIT")
     db = get_db()
     tx_id = _next_id("TRX", "transactions", "transaction_id")
+    d = _safe_day(y, m, d)  # <<< evita date future
     iso_date = date_cls(y, m, d).isoformat()
     db.execute("""
         INSERT INTO transactions (transaction_id, account_id, piggy_id, date, description, category, type, amount)
@@ -297,21 +305,14 @@ def seed_demo_12m():
 
     # 1) Pulisci periodo target (ultimi 13 mesi per sicurezza)
     cutoff = (date_cls.today().replace(day=1) - timedelta(days=370)).isoformat()
-    db.execute("""
-        DELETE FROM transactions
-        WHERE account_id=? AND date >= ?
-    """, (account_id, cutoff))
-    db.execute("""
-        DELETE FROM piggy_transfers
-        WHERE account_id=? AND date >= ?
-    """, (account_id, cutoff))
+    db.execute("DELETE FROM transactions WHERE account_id=? AND date >= ?", (account_id, cutoff))
+    db.execute("DELETE FROM piggy_transfers WHERE account_id=? AND date >= ?", (account_id, cutoff))
     db.commit()
 
     # 2) Parametri realistici
     base_opening = random.randint(600, 1400)  # saldo iniziale ipotetico
     salary_min, salary_max = 1600, 2400
     rent = random.choice([550, 650, 700, 800, 900])
-    phone_min, phone_max = 18, 32
     utilities_min, utilities_max = 40, 120
 
     subs = [
@@ -342,140 +343,119 @@ def seed_demo_12m():
         # Stipendio (27 del mese o l'ultimo giorno lavorativo precedente)
         salary_amt = random.randint(salary_min, salary_max)
         d = min(27, calendar.monthrange(y, m)[1])
-        # se cade di domenica, anticipa di 1
         dt = date_cls(y, m, d)
-        if dt.weekday() == 6:
+        if dt.weekday() == 6:  # se domenica, anticipa di 1
             d -= 1
-        net_flow += _add_tx(
-            account_id=account_id, y=y, m=m, d=d,
-            desc="Stipendio", category="Entrate", ttype="CREDIT", amount=salary_amt
-        )
+        net_flow += _add_tx(account_id=account_id, y=y, m=m, d=d,
+                            desc="Stipendio", category="Entrate",
+                            ttype="CREDIT", amount=salary_amt)
 
         # Affitto (1 del mese)
-        net_flow += _add_tx(
-            account_id=account_id, y=y, m=m, d=1,
-            desc="Affitto", category="Casa", ttype="DEBIT", amount=-float(rent)
-        )
+        net_flow += _add_tx(account_id=account_id, y=y, m=m, d=1,
+                            desc="Affitto", category="Casa",
+                            ttype="DEBIT", amount=-float(rent))
 
         # Abbonamenti (tra il 5 e il 12)
         for name, cat, fee in subs:
             day = min(random.randint(5, 12), calendar.monthrange(y, m)[1])
-            net_flow += _add_tx(
-                account_id=account_id, y=y, m=m, d=day,
-                desc=f"{name}", category=cat, ttype="DEBIT", amount=-round(fee, 2)
-            )
+            net_flow += _add_tx(account_id=account_id, y=y, m=m, d=day,
+                                desc=f"{name}", category=cat,
+                                ttype="DEBIT", amount=-round(fee, 2))
 
-        # Bollette (metà mese)
+        # Utenze (metà mese)
         bolletta = random.choice(utilities_list)
         util_cost = round(random.uniform(utilities_min, utilities_max) * mult, 2)
         day_util = min(random.randint(13, 19), calendar.monthrange(y, m)[1])
-        net_flow += _add_tx(
-            account_id=account_id, y=y, m=m, d=day_util,
-            desc=bolletta, category="Utenze", ttype="DEBIT", amount=-util_cost
-        )
+        net_flow += _add_tx(account_id=account_id, y=y, m=m, d=day_util,
+                            desc=bolletta, category="Utenze",
+                            ttype="DEBIT", amount=-util_cost)
 
         # Spesa (3–6 volte/mese)
         for _ in range(random.randint(3, 6)):
             market = random.choice(supermarkets)
             cost = round(random.uniform(28, 110) * mult, 2)
             day = _rand_day(y, m)
-            net_flow += _add_tx(
-                account_id=account_id, y=y, m=m, d=day,
-                desc=f"Spesa {market}", category="Spesa", ttype="DEBIT", amount=-cost
-            )
+            net_flow += _add_tx(account_id=account_id, y=y, m=m, d=day,
+                                desc=f"Spesa {market}", category="Spesa",
+                                ttype="DEBIT", amount=-cost)
 
         # Ristoranti (2–5/mese)
         for _ in range(random.randint(2, 5)):
             place = random.choice(diners)
             cost = round(random.uniform(15, 55) * mult, 2)
             day = _rand_day(y, m)
-            net_flow += _add_tx(
-                account_id=account_id, y=y, m=m, d=day,
-                desc=place, category="Ristoranti", ttype="DEBIT", amount=-cost
-            )
+            net_flow += _add_tx(account_id=account_id, y=y, m=m, d=day,
+                                desc=place, category="Ristoranti",
+                                ttype="DEBIT", amount=-cost)
 
         # Carburante/Trasporti (0–2/mese)
         for _ in range(random.randint(0, 2)):
             station = random.choice(fuel_stations)
             cost = round(random.uniform(45, 120), 2)
             day = _rand_day(y, m)
-            net_flow += _add_tx(
-                account_id=account_id, y=y, m=m, d=day,
-                desc=f"Carburante {station}", category="Trasporti", ttype="DEBIT", amount=-cost
-            )
+            net_flow += _add_tx(account_id=account_id, y=y, m=m, d=day,
+                                desc=f"Carburante {station}", category="Trasporti",
+                                ttype="DEBIT", amount=-cost)
 
         # Shopping (1–3/mese)
         for _ in range(random.randint(1, 3)):
             shop = random.choice(shops)
             cost = round(random.uniform(20, 150) * mult, 2)
             day = _rand_day(y, m)
-            net_flow += _add_tx(
-                account_id=account_id, y=y, m=m, d=day,
-                desc=shop, category="Shopping", ttype="DEBIT", amount=-cost
-            )
+            net_flow += _add_tx(account_id=account_id, y=y, m=m, d=day,
+                                desc=shop, category="Shopping",
+                                ttype="DEBIT", amount=-cost)
 
         # Sanità (0–1/mese)
         if random.random() < 0.35:
             day = _rand_day(y, m)
             cost = round(random.uniform(20, 80), 2)
-            net_flow += _add_tx(
-                account_id=account_id, y=y, m=m, d=day,
-                desc="Ticket sanitario", category="Sanità", ttype="DEBIT", amount=-cost
-            )
+            net_flow += _add_tx(account_id=account_id, y=y, m=m, d=day,
+                                desc="Ticket sanitario", category="Sanità",
+                                ttype="DEBIT", amount=-cost)
 
-        # Viaggi (estate o ponti): luglio/agosto e a volte dicembre
+        # Viaggi (estate o dicembre): hotel + treno/aereo
         if m in (7, 8) or (m == 12 and random.random() < 0.4):
-            # hotel + treno/aereo
-            day1 = _rand_day(y, m)
-            day2 = min(day1 + 2, calendar.monthrange(y, m)[1])
-            net_flow += _add_tx(
-                account_id=account_id, y=y, m=m, d=day1,
-                desc="Hotel", category="Viaggi", ttype="DEBIT", amount=-round(random.uniform(120, 280), 2)
-            )
-            net_flow += _add_tx(
-                account_id=account_id, y=y, m=m, d=day2,
-                desc="Treno/Aereo", category="Viaggi", ttype="DEBIT", amount=-round(random.uniform(70, 180), 2)
-            )
+            day1 = _safe_day(y, m, _rand_day(y, m))
+            day2 = _safe_day(y, m, min(day1 + 2, calendar.monthrange(y, m)[1]))
+            if day2 < day1:
+                day2 = day1
+            net_flow += _add_tx(account_id=account_id, y=y, m=m, d=day1,
+                                desc="Hotel", category="Viaggi",
+                                ttype="DEBIT", amount=-round(random.uniform(120, 280), 2))
+            net_flow += _add_tx(account_id=account_id, y=y, m=m, d=day2,
+                                desc="Treno/Aereo", category="Viaggi",
+                                ttype="DEBIT", amount=-round(random.uniform(70, 180), 2))
 
-        # Accantonamento nel salvadanaio (100€/mese).
-        # Usa la funzione ufficiale così crea ANCHE la transazione di conto collegata con piggy_id (esclusa dai report).
+        # Accantonamento nel salvadanaio (100€/mese) – clamp giorno (max oggi)
+        d_pig = _safe_day(y, m, min(25, calendar.monthrange(y, m)[1]))
         try:
             _insert_piggy_transfer(
-                piggy_id=piggy_id,
-                account_id=account_id,
-                amount=100.0,
-                direction="TO_PIGGY",
-                note="Accantonamento mensile",
-                tx_on_account=True,
-                when=date_cls(y, m, min(25, calendar.monthrange(y, m)[1])).isoformat()
+                piggy_id=piggy_id, account_id=account_id, amount=100.0,
+                direction="TO_PIGGY", note="Accantonamento mensile",
+                tx_on_account=True, when=date_cls(y, m, d_pig).isoformat()
             )
         except Exception:
-            # in caso di guard-rail o altro, ignora
             pass
 
-        # Eventuale rientro in Agosto (imprevisto): FROM_PIGGY 100–200
+        # Imprevisto estivo (agosto): FROM_PIGGY 100–200 – clamp giorno
         if m == 8 and random.random() < 0.5:
+            d_imp = _safe_day(y, m, min(28, calendar.monthrange(y, m)[1]))
             try:
                 _insert_piggy_transfer(
-                    piggy_id=piggy_id,
-                    account_id=account_id,
+                    piggy_id=piggy_id, account_id=account_id,
                     amount=random.choice([100.0, 150.0, 200.0]),
-                    direction="FROM_PIGGY",
-                    note="Imprevisto estivo",
-                    tx_on_account=True,
-                    when=date_cls(y, m, min(28, calendar.monthrange(y, m)[1])).isoformat()
+                    direction="FROM_PIGGY", note="Imprevisto estivo",
+                    tx_on_account=True, when=date_cls(y, m, d_imp).isoformat()
                 )
             except Exception:
                 pass
 
     # 4) Aggiorna saldo del conto e del salvadanaio
-    #   - saldo finale = base_opening + flusso netto 12 mesi + (flusso piggy già applicato da _insert_piggy_transfer)
-    #   - ricalcolo piggy
     db.execute("UPDATE accounts SET balance = ? WHERE account_id = ?", (float(base_opening + net_flow), account_id))
     _recalc_piggy(piggy_id)
     db.commit()
     print(f"✅ Dati demo ultimi 12 mesi generati su {account_id}. Saldo base ~{base_opening}€, piggy ricalcolato.")
-
 
 
 # --- Auth Utils ---
@@ -731,43 +711,87 @@ def api_accounts():
 
 @app.get("/api/transactions")
 @swag_from({
-    "summary": "Lista transazioni",
+    "summary": "Lista transazioni con ricerca e ordinamento",
     "tags": ["Transactions"],
     "parameters": [
-        {"name": "account_id", "in": "query", "schema": {"type": "string"}, "required": False},
-        {"name": "limit", "in": "query", "schema": {"type": "integer", "default": 20, "minimum": 1, "maximum": 200}}
+        {"name": "account_id", "in": "query", "schema": {"type": "string"}},
+        {"name": "q", "in": "query", "schema": {"type": "string"}, "description": "Cerca in descrizione/categoria"},
+        {"name": "type", "in": "query", "schema": {"type": "string", "enum": ["DEBIT", "CREDIT"]}},
+        {"name": "date_from", "in": "query", "schema": {"type": "string", "example": "2024-01-01"}},
+        {"name": "date_to", "in": "query", "schema": {"type": "string", "example": "2024-12-31"}},
+        {"name": "sort", "in": "query", "schema": {"type": "string", "enum": ["date", "amount", "description", "category"]}},
+        {"name": "order", "in": "query", "schema": {"type": "string", "enum": ["asc", "desc"]}},
+        {"name": "limit", "in": "query", "schema": {"type": "integer", "default": 10, "minimum": 1, "maximum": 200}},
+        {"name": "offset", "in": "query", "schema": {"type": "integer", "default": 0, "minimum": 0}}
     ],
     "responses": {"200": {"description": "OK"}, "401": {"description": "Non autenticato"}}
 })
 def api_transactions():
     if not session.get("user_id"):
         return jsonify({"message": "unauthenticated"}), 401
+
     account_id = request.args.get("account_id")
+    q = (request.args.get("q") or "").strip()
+    tx_type = request.args.get("type")
+    date_from = request.args.get("date_from")
+    date_to = request.args.get("date_to")
+    sort = (request.args.get("sort") or "date").lower()
+    order = (request.args.get("order") or "desc").lower()
+
     try:
-        limit = int(request.args.get("limit", 20))
-        limit = max(1, min(limit, 200))
+        limit = max(1, min(int(request.args.get("limit", 10)), 200))
     except ValueError:
-        limit = 20
-    db = get_db()
+        limit = 50
+    try:
+        offset = max(0, int(request.args.get("offset", 0)))
+    except ValueError:
+        offset = 0
+
+    # whitelist colonne ordinamento
+    sort_map = {
+        "date": "t.date",
+        "amount": "t.amount",
+        "description": "t.description",
+        "category": "t.category",
+    }
+    sort_col = sort_map.get(sort, "t.date")
+    order_sql = "ASC" if order == "asc" else "DESC"
+
+    where = ["a.user_id = ?"]
+    params = [session["user_id"]]
+
     if account_id:
-        rows = db.execute("""
-            SELECT t.transaction_id, t.date, t.description, t.category, t.type, t.amount, t.account_id
-            FROM transactions t
-            JOIN accounts a ON a.account_id = t.account_id
-            WHERE a.user_id = ? AND t.account_id = ?
-            ORDER BY t.date DESC, t.created_at DESC
-            LIMIT ?
-        """, (session["user_id"], account_id, limit)).fetchall()
-    else:
-        rows = db.execute("""
-            SELECT t.transaction_id, t.date, t.description, t.category, t.type, t.amount, t.account_id
-            FROM transactions t
-            JOIN accounts a ON a.account_id = t.account_id
-            WHERE a.user_id = ?
-            ORDER BY t.date DESC, t.created_at DESC
-            LIMIT ?
-        """, (session["user_id"], limit)).fetchall()
+        where.append("t.account_id = ?")
+        params.append(account_id)
+    if tx_type in ("DEBIT", "CREDIT"):
+        where.append("t.type = ?")
+        params.append(tx_type)
+    if q:
+        where.append("(t.description LIKE ? OR t.category LIKE ?)")
+        like = f"%{q}%"
+        params.extend([like, like])
+    if date_from:
+        where.append("t.date >= ?")
+        params.append(date_from)
+    if date_to:
+        where.append("t.date <= ?")
+        params.append(date_to)
+
+    sql = f"""
+        SELECT t.transaction_id, t.date, t.description, t.category, t.type, t.amount,
+               t.account_id, a.name AS account_name
+        FROM transactions t
+        JOIN accounts a ON a.account_id = t.account_id
+        WHERE {' AND '.join(where)}
+        ORDER BY {sort_col} {order_sql}, t.created_at DESC
+        LIMIT ? OFFSET ?
+    """
+    params.extend([limit, offset])
+
+    db = get_db()
+    rows = db.execute(sql, params).fetchall()
     return jsonify([dict(r) for r in rows])
+
 
 
 @app.get("/api/piggy-banks")
