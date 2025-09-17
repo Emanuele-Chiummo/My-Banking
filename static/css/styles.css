@@ -298,9 +298,164 @@ body.app-shell {
   color: var(--color-primary-dark);
 }
 
+.badge-soft-light {
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+}
+
 .badge-soft-success { background: rgba(22, 163, 74, 0.18); color: #166534; }
 .badge-soft-warning { background: rgba(245, 158, 11, 0.18); color: #92400e; }
 .badge-soft-danger { background: rgba(220, 38, 38, 0.18); color: #991b1b; }
+
+.report-hero {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+.report-section {
+  margin-top: 0.9rem;
+}
+
+.report-section:first-of-type {
+  margin-top: 0;
+}
+
+.report-card {
+  padding: clamp(1.15rem, 1rem + 0.6vw, 1.6rem);
+  border-radius: var(--radius-lg);
+}
+
+.report-card .chart-figure {
+  margin: 0;
+}
+
+.report-pill-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.report-pill {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-sm);
+  padding: 0.85rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.report-pill dt {
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.75);
+  margin: 0;
+}
+
+.report-pill dd {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+.report-metric-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+.metric-tile {
+  background: rgba(67, 83, 255, 0.08);
+  border-radius: var(--radius-md);
+  padding: 1.1rem 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-height: 140px;
+}
+
+.metric-tile .metric-label {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+  color: var(--color-secondary);
+}
+
+.metric-tile .metric-value {
+  font-size: 1.45rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.metric-subtle {
+  font-size: 0.85rem;
+  color: var(--color-secondary);
+}
+
+.chart-figure {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.chart-canvas-wrap {
+  width: 100%;
+  position: relative;
+  min-height: 200px;
+}
+
+.chart-canvas-sm {
+  min-height: 160px;
+}
+
+.report-donut {
+  max-width: clamp(220px, 65%, 320px);
+  margin-inline: auto;
+}
+
+.report-donut canvas {
+  max-width: 100% !important;
+  max-height: 260px !important;
+  margin-inline: auto;
+}
+
+.chart-canvas-wrap canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.report-gauge {
+  max-width: 260px;
+}
+
+.report-legend .dot {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 999px;
+  display: inline-block;
+  margin-right: 0.5rem;
+}
+
+.report-legend li {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding-block: 0.25rem;
+}
+
+@media (max-width: 575.98px) {
+  .metric-tile {
+    min-height: auto;
+    padding: 1rem;
+  }
+  .chart-canvas-wrap { min-height: 150px; }
+}
 
 .form-control,
 .form-select {
