@@ -2,16 +2,40 @@
 {% block title %}P2P — Bank App{% endblock %}
 
 {% block content %}
-<div class="d-flex align-items-center justify-content-between mb-3">
-  <h1 class="h4 mb-0">Invia denaro (P2P)</h1>
-</div>
+{% set total_contacts = contacts|length %}
+{% set total_accounts = accounts|length %}
+{% set total_tx = p2p_tx|length %}
 
-<div class="row g-3">
+<section class="card card-gradient border-0 report-hero report-card report-section">
+  <div class="d-flex flex-column flex-lg-row align-items-start align-items-lg-center justify-content-between gap-4">
+    <div class="text-white">
+      <span class="badge-soft badge-soft-light text-uppercase">Pagamenti istantanei</span>
+      <h1 class="h4 mt-3 mb-2">Invia e gestisci i tuoi P2P</h1>
+      <p class="mb-0 text-white-50">Operazioni tra contatti salvati, con gruppi di split e storico movimentazioni.</p>
+    </div>
+    <dl class="report-pill-grid" aria-label="Statistiche rapide P2P">
+      <div class="report-pill" role="group" aria-label="Conti disponibili">
+        <dt>Conti collegati</dt>
+        <dd>{{ total_accounts }}</dd>
+      </div>
+      <div class="report-pill" role="group" aria-label="Contatti">
+        <dt>Contatti interni</dt>
+        <dd>{{ total_contacts }}</dd>
+      </div>
+      <div class="report-pill" role="group" aria-label="Transazioni recenti">
+        <dt>Movimenti P2P</dt>
+        <dd>{{ total_tx }}</dd>
+      </div>
+    </dl>
+  </div>
+</section>
+
+<section class="row g-3 report-section">
   <div class="col-12 col-lg-6">
-    <div class="card shadow-sm border-0">
-      <div class="card-body">
-        <!-- action risolta da Jinja, niente Jinja nel JS -->
-        <form id="p2pForm" class="row g-3" action="{{ url_for('api_p2p_send') }}" method="post">
+    <div class="card shadow-sm border-0 report-card h-100">
+      <!-- action risolta da Jinja, niente Jinja nel JS -->
+      <h2 class="h5 mb-3">Nuovo trasferimento</h2>
+      <form id="p2pForm" class="row g-3" action="{{ url_for('api_p2p_send') }}" method="post">
           <input type="hidden" name="contact_display_name" id="contactDisplayName" value="">
           <div class="col-12">
             <label class="form-label">Conto mittente</label>
@@ -48,21 +72,20 @@
           <div class="col-12">
             <button class="btn btn-primary" type="submit">Invia</button>
           </div>
-        </form>
+      </form>
 
-        <!-- Toast stack -->
-        <div class="toast-container position-fixed top-0 start-50 translate-middle-x p-3" id="p2pToastStack" style="z-index:1090;"></div>
+      <!-- Toast stack -->
+      <div class="toast-container position-fixed top-0 start-50 translate-middle-x p-3" id="p2pToastStack" style="z-index:1090;"></div>
 
-        <div id="p2pAlert" class="alert d-none mt-3" role="alert"></div>
-      </div>
+      <div id="p2pAlert" class="alert d-none mt-3" role="alert"></div>
     </div>
   </div>
 
   <div class="col-12 col-lg-6">
-    <div class="card shadow-sm border-0">
-      <div class="card-body">
-        <h2 class="h6">Ultime transazioni P2P (mittente/destinatario)</h2>
-        <div class="table-responsive mt-2">
+    <div class="card shadow-sm border-0 report-card h-100">
+      <h2 class="h5">Ultime transazioni</h2>
+      <p class="text-muted small mb-2">Movimenti P2P più recenti registrati dal tuo profilo.</p>
+      <div class="table-responsive mt-2">
           <table class="table table-sm">
             <thead>
               <tr>
@@ -89,76 +112,74 @@
               {% endfor %}
             </tbody>
           </table>
-        </div>
       </div>
     </div>
   </div>
-</div>
 
-<div class="row g-3 mt-1">
+</section>
+
+<section class="row g-3 report-section">
   <div class="col-12">
-    <div class="card shadow-sm border-0">
-      <div class="card-body">
-        <div class="d-flex flex-wrap justify-content-between align-items-start gap-2">
-          <div>
-            <h2 class="h6 mb-1">Divisione spese di gruppo</h2>
-            <p class="text-muted small mb-0">Crea gruppi stile Splitwise e invita i contatti a dividere le spese.</p>
-          </div>
-          <div class="d-flex gap-2">
-            <button class="btn btn-outline-danger btn-sm" id="splitDeleteGroupBtn" type="button" disabled>Elimina gruppo</button>
-            <button class="btn btn-primary btn-sm" type="button" data-bs-toggle="modal" data-bs-target="#modalSplitGroup">Nuovo gruppo</button>
-          </div>
+    <div class="card shadow-sm border-0 report-card">
+      <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+        <div>
+          <h2 class="h5 mb-1">Divisione spese di gruppo</h2>
+          <p class="text-muted small mb-0">Crea gruppi stile Splitwise e invita i contatti a dividere le spese.</p>
         </div>
-
-        <div class="row g-3 mt-2">
-          <div class="col-12 col-md-6">
-            <label class="form-label" for="splitGroupSelect">Gruppo</label>
-            <select class="form-select" id="splitGroupSelect" aria-label="Seleziona un gruppo"></select>
-          </div>
-          <div class="col-12 col-md-6 d-flex align-items-end">
-            <button class="btn btn-outline-secondary w-100 w-md-auto" id="splitAddMemberBtn" type="button" data-bs-toggle="modal" data-bs-target="#modalSplitMember" disabled>Aggiungi persona</button>
-          </div>
+        <div class="d-flex gap-2">
+          <button class="btn btn-outline-danger btn-sm" id="splitDeleteGroupBtn" type="button" disabled>Elimina gruppo</button>
+          <button class="btn btn-primary btn-sm" type="button" data-bs-toggle="modal" data-bs-target="#modalSplitGroup">Nuovo gruppo</button>
         </div>
+      </div>
 
-        <div id="splitMembersEmpty" class="alert alert-info mt-3">Crea un gruppo e aggiungi almeno due persone per iniziare a dividere una spesa.</div>
-
-        <div id="splitMembersTableWrap" class="table-responsive mt-3 d-none">
-          <table class="table table-sm align-middle mb-0">
-            <thead>
-              <tr>
-                <th>Partecipante</th>
-                <th class="text-end">Quota stimata</th>
-                <th class="text-end">Azioni</th>
-              </tr>
-            </thead>
-            <tbody id="splitMembersTableBody"></tbody>
-          </table>
+      <div class="row g-3 mt-2">
+        <div class="col-12 col-md-6">
+          <label class="form-label" for="splitGroupSelect">Gruppo</label>
+          <select class="form-select" id="splitGroupSelect" aria-label="Seleziona un gruppo"></select>
         </div>
+        <div class="col-12 col-md-6 d-flex align-items-end">
+          <button class="btn btn-outline-secondary w-100 w-md-auto" id="splitAddMemberBtn" type="button" data-bs-toggle="modal" data-bs-target="#modalSplitMember" disabled>Aggiungi persona</button>
+        </div>
+      </div>
 
-        <div class="row g-3 mt-2">
-          <div class="col-12 col-md-6">
-            <label class="form-label" for="splitAmount">Totale da dividere</label>
-            <div class="input-group">
-              <input type="number" class="form-control" id="splitAmount" min="0.01" step="0.01" placeholder="0.00" aria-describedby="splitAmountHelp">
-              <span class="input-group-text">€</span>
-            </div>
-            <div class="form-text" id="splitAmountHelp">Le quote verranno ripartite in parti uguali.</div>
+      <div id="splitMembersEmpty" class="alert alert-info mt-3">Crea un gruppo e aggiungi almeno due persone per iniziare a dividere una spesa.</div>
+
+      <div id="splitMembersTableWrap" class="table-responsive mt-3 d-none">
+        <table class="table table-sm align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Partecipante</th>
+              <th class="text-end">Quota stimata</th>
+              <th class="text-end">Azioni</th>
+            </tr>
+          </thead>
+          <tbody id="splitMembersTableBody"></tbody>
+        </table>
+      </div>
+
+      <div class="row g-3 mt-2">
+        <div class="col-12 col-md-6">
+          <label class="form-label" for="splitAmount">Totale da dividere</label>
+          <div class="input-group">
+            <input type="number" class="form-control" id="splitAmount" min="0.01" step="0.01" placeholder="0.00" aria-describedby="splitAmountHelp">
+            <span class="input-group-text">€</span>
           </div>
-          <div class="col-12 col-md-6">
-            <label class="form-label" for="splitMessage">Nota (facoltativa)</label>
-            <input type="text" class="form-control" id="splitMessage" placeholder="Es. Cena di sabato">
-          </div>
+          <div class="form-text" id="splitAmountHelp">Le quote verranno ripartite in parti uguali.</div>
         </div>
+        <div class="col-12 col-md-6">
+          <label class="form-label" for="splitMessage">Nota (facoltativa)</label>
+          <input type="text" class="form-control" id="splitMessage" placeholder="Es. Cena di sabato">
+        </div>
+      </div>
 
-        <div class="d-flex flex-wrap gap-2 mt-3">
-          <button class="btn btn-primary" id="splitSendBtn" type="button" disabled>Invia quote</button>
-          <button class="btn btn-outline-primary" id="splitRequestBtn" type="button" disabled>Richiedi quote</button>
-          <div class="ms-auto text-muted small align-self-center" id="splitSummary"></div>
-        </div>
+      <div class="d-flex flex-wrap gap-2 mt-3">
+        <button class="btn btn-primary" id="splitSendBtn" type="button" disabled>Invia quote</button>
+        <button class="btn btn-outline-primary" id="splitRequestBtn" type="button" disabled>Richiedi quote</button>
+        <div class="ms-auto text-muted small align-self-center" id="splitSummary"></div>
       </div>
     </div>
   </div>
-</div>
+</section>
 
 <!-- Modal: nuovo gruppo -->
 <div class="modal fade" id="modalSplitGroup" tabindex="-1" aria-hidden="true">
