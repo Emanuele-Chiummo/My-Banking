@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import calendar
 import json
-import sqlite3
+import random
 import re
+import sqlite3
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
-from pathlib import Path
 from io import BytesIO
+from pathlib import Path
 from flask import (
     Flask, render_template, request, redirect,
     url_for, session, flash, g, jsonify, send_file
@@ -14,10 +16,10 @@ from flask import (
 from werkzeug.routing import BuildError
 from werkzeug.security import generate_password_hash, check_password_hash
 
-# --- Swagger ---
+# --- Swagger Integration ---
 from flasgger import Swagger, swag_from
 
-# --- Config ---
+# --- Application Configuration ---
 app = Flask(__name__, instance_relative_config=True)
 app.config['SECRET_KEY'] = 'cambia-questa-secret-in-prod'  # usa una env var in prod
 app.config['DATABASE'] = str(Path(app.instance_path) / 'app.db')
@@ -33,7 +35,7 @@ swagger = Swagger(app)
 Path(app.instance_path).mkdir(parents=True, exist_ok=True)
 
 
-# --- DB Helpers ---
+# --- Database Helpers ---
 def get_db():
     if 'db' not in g:
         g.db = sqlite3.connect(app.config['DATABASE'])
@@ -53,7 +55,7 @@ def exec_script(sql_text: str):
     db.commit()
 
 
-# --- Helper: ID, ricalcoli, movimenti ---
+# --- Identifier & Movement Helpers ---
 def _next_id(prefix: str, table: str, col: str) -> str:
     """Genera ID testuale incrementale, es. PIG001 → PIG002, gestendo correttamente 3/4/5+ cifre."""
     db = get_db()
@@ -73,7 +75,7 @@ def _next_id(prefix: str, table: str, col: str) -> str:
     n = int(m.group(1)) + 1 if m else 1
     return f"{prefix}{n:03d}"
 
-# --- Helpers demo utenti/conti/contatti ---
+# --- Demo Entity Helpers ---
 def _upsert_user(user_id: str, codice: str, first: str, last: str, pwd: str = "Password123!"):
     db = get_db()
     db.execute("""
@@ -110,7 +112,7 @@ def _ensure_contact_for(owner_user_id: str, target_user_id: str, target_account_
     """, (contact_id, owner_user_id, display_name, target_user_id, target_account_id))
 
 
-# --- Notifiche & impostazioni utente ------------------------------------
+# --- Notification & User Settings Helpers ---
 
 def _ensure_notification(*, user_id: str, type_: str, title: str,
                          body: str | None = None, dedupe_key: str | None = None,
@@ -283,7 +285,7 @@ def _update_user_settings(user_id: str, *, default_currency: str, decimal_places
     db.commit()
     return _get_user_settings(user_id)
 
-
+# --- Navigation Context ---
 NAV_PRIMARY_LINKS = [
     {
         "endpoint": "dashboard",
@@ -338,6 +340,7 @@ def inject_global_context():
         "nav_links": links,
     }
 
+# --- CLI Commands ---
 @app.cli.command("seed-demo-more-users")
 def seed_demo_more_users():
     """
@@ -398,6 +401,91 @@ def seed_demo_more_users():
     db.commit()
     print("✅ seed-demo-more-users: creati/aggiornati USE002..USE005, conti e rubrica aggiornata.")
 
+
+# --- CLI Commands Database & Demo Seeds ---
+@app.cli.command("init-db")
+def init_db_cmd():
+    schema_path = Path("schema.sql")
+    if not schema_path.exists():
+        raise SystemExit("schema.sql non trovato nella root del progetto.")
+    db_file = Path(app.config['DATABASE'])
+    if db_file.exists():
+        db_file.unlink()
+    exec_script(schema_path.read_text(encoding="utf-8"))
+    print("✅ Database inizializzato.")
+
+@app.cli.command("seed-demo")
+def seed_demo_cmd():
+    db = get_db()
+    user_id = "USE001"
+    codice_cliente = "123456"
+    first_name = "Emanuele"
+    last_name = "Chiummo"
+    password_hash = generate_password_hash("Password123!")
+    db.execute("""
+        INSERT INTO users (user_id, codice_cliente, first_name, last_name, password_hash)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+          codice_cliente = excluded.codice_cliente,
+          first_name     = excluded.first_name,
+          last_name      = excluded.last_name,
+          password_hash  = excluded.password_hash
+    """, (user_id, codice_cliente, first_name, last_name, password_hash))
+    db.commit()
+    print("✅ Utente di test creato/aggiornato.")
+
+@app.cli.command("seed-demo-data")
+def seed_demo_data_cmd():
+    db = get_db()
+    user_id = "USE001"
+    u = db.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,)).fetchone()
+    if not u:
+        raise SystemExit("Prima esegui: flask --app app seed-demo")
+
+    db.execute("""
+        INSERT INTO accounts (account_id, user_id, iban, name, currency, balance)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(account_id) DO NOTHING
+    """, ("ACC001", user_id, "IT60X0542811101000000123456", "Conto Principale", "EUR", 1250.00))
+
+    db.execute("""
+        INSERT INTO piggy_banks (piggy_id, user_id, name, target_amount, current_amount, status)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(piggy_id) DO NOTHING
+    """, ("PIG001", user_id, "Vacanze", 1000.00, 150.00, "ACTIVE"))
+
+    trx = [
+        ("TRX001", "ACC001", None, "2025-09-10", "Stipendio", "Entrate", "CREDIT", 1500.00),
+        ("TRX002", "ACC001", None, "2025-09-11", "Spesa Supermercato", "Spesa", "DEBIT", -85.20),
+        ("TRX003", "ACC001", None, "2025-09-12", "Abbonamento Netflix", "Abbonamenti", "DEBIT", -12.99),
+        ("TRX004", "ACC001", "PIG001", "2025-09-13", "Trasferimento Salvadanio", "Risparmio", "DEBIT", -100.00),
+        ("TRX005", "ACC001", None, "2025-09-14", "Cena fuori", "Ristoranti", "DEBIT", -52.40)
+    ]
+    for t in trx:
+        db.execute("""
+            INSERT INTO transactions (transaction_id, account_id, piggy_id, date, description, category, type, amount)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(transaction_id) DO NOTHING
+        """, t)
+
+    transfers = [
+        ("TRP001", "PIG001", "ACC001", "2025-09-13", 100.00, "TO_PIGGY", "Accantonamento mensile"),
+        ("TRP002", "PIG001", "ACC001", "2025-09-15", 50.00, "FROM_PIGGY", "Imprevisto")
+    ]
+    for tr in transfers:
+        db.execute("""
+            INSERT INTO piggy_transfers (transfer_id, piggy_id, account_id, date, amount, direction, note)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(transfer_id) DO NOTHING
+        """, tr)
+
+    db.execute("UPDATE accounts SET balance = ? WHERE account_id = 'ACC001'", (1250.00,))
+    db.execute("UPDATE piggy_banks SET current_amount = ? WHERE piggy_id = 'PIG001'", (_get_piggy_balance("PIG001"),))
+    db.commit()
+    print("✅ Dati demo inseriti.")
+
+
+# --- Piggy Bank Helpers ---
 
 
 def _get_piggy_balance(piggy_id: str) -> float:
@@ -473,6 +561,8 @@ def _insert_piggy_transfer(*, piggy_id: str, account_id: str, amount: float,
 
     db.commit()
     return transfer_id
+
+# --- P2P & Split Helpers ---
 
 def _ensure_contact(owner_user_id: str, contact_id: str):
     db = get_db()
@@ -627,96 +717,11 @@ def _p2p_instant(*, from_account_id: str, to_account_id: str, amount: float,
 
 
 
-# --- CLI: init-db & seed-demo & seed-demo-data ---
-@app.cli.command("init-db")
-def init_db_cmd():
-    schema_path = Path("schema.sql")
-    if not schema_path.exists():
-        raise SystemExit("schema.sql non trovato nella root del progetto.")
-    db_file = Path(app.config['DATABASE'])
-    if db_file.exists():
-        db_file.unlink()
-    exec_script(schema_path.read_text(encoding="utf-8"))
-    print("✅ Database inizializzato.")
-
-@app.cli.command("seed-demo")
-def seed_demo_cmd():
-    db = get_db()
-    user_id = "USE001"
-    codice_cliente = "123456"
-    first_name = "Emanuele"
-    last_name = "Chiummo"
-    password_hash = generate_password_hash("Password123!")
-    db.execute("""
-        INSERT INTO users (user_id, codice_cliente, first_name, last_name, password_hash)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(user_id) DO UPDATE SET
-          codice_cliente = excluded.codice_cliente,
-          first_name     = excluded.first_name,
-          last_name      = excluded.last_name,
-          password_hash  = excluded.password_hash
-    """, (user_id, codice_cliente, first_name, last_name, password_hash))
-    db.commit()
-    print("✅ Utente di test creato/aggiornato.")
-
-@app.cli.command("seed-demo-data")
-def seed_demo_data_cmd():
-    db = get_db()
-    user_id = "USE001"
-    u = db.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,)).fetchone()
-    if not u:
-        raise SystemExit("Prima esegui: flask --app app seed-demo")
-
-    db.execute("""
-        INSERT INTO accounts (account_id, user_id, iban, name, currency, balance)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(account_id) DO NOTHING
-    """, ("ACC001", user_id, "IT60X0542811101000000123456", "Conto Principale", "EUR", 1250.00))
-
-    db.execute("""
-        INSERT INTO piggy_banks (piggy_id, user_id, name, target_amount, current_amount, status)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(piggy_id) DO NOTHING
-    """, ("PIG001", user_id, "Vacanze", 1000.00, 150.00, "ACTIVE"))
-
-    trx = [
-        ("TRX001", "ACC001", None, "2025-09-10", "Stipendio", "Entrate", "CREDIT", 1500.00),
-        ("TRX002", "ACC001", None, "2025-09-11", "Spesa Supermercato", "Spesa", "DEBIT", -85.20),
-        ("TRX003", "ACC001", None, "2025-09-12", "Abbonamento Netflix", "Abbonamenti", "DEBIT", -12.99),
-        ("TRX004", "ACC001", "PIG001", "2025-09-13", "Trasferimento Salvadanio", "Risparmio", "DEBIT", -100.00),
-        ("TRX005", "ACC001", None, "2025-09-14", "Cena fuori", "Ristoranti", "DEBIT", -52.40)
-    ]
-    for t in trx:
-        db.execute("""
-            INSERT INTO transactions (transaction_id, account_id, piggy_id, date, description, category, type, amount)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(transaction_id) DO NOTHING
-        """, t)
-
-    transfers = [
-        ("TRP001", "PIG001", "ACC001", "2025-09-13", 100.00, "TO_PIGGY", "Accantonamento mensile"),
-        ("TRP002", "PIG001", "ACC001", "2025-09-15", 50.00, "FROM_PIGGY", "Imprevisto")
-    ]
-    for tr in transfers:
-        db.execute("""
-            INSERT INTO piggy_transfers (transfer_id, piggy_id, account_id, date, amount, direction, note)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(transfer_id) DO NOTHING
-        """, tr)
-
-    db.execute("UPDATE accounts SET balance = ? WHERE account_id = 'ACC001'", (1250.00,))
-    db.execute("UPDATE piggy_banks SET current_amount = ? WHERE piggy_id = 'PIG001'", (_get_piggy_balance("PIG001"),))
-    db.commit()
-    print("✅ Dati demo inseriti.")
-
-# --- DEMO 12 MESI REALISTICI ---
-import random
-from datetime import datetime, timedelta, date as date_cls
-import calendar
+# --- Demo Data 12-Month Scenario ---
 
 def _month_iter(n_back: int = 12):
     """Ritorna gli ultimi n_back mesi come (year, month), dal mese corrente indietro."""
-    today = date_cls.today()
+    today = date.today()
     y, m = today.year, today.month
     out = []
     for _ in range(n_back):
@@ -733,7 +738,7 @@ def _rand_day(year: int, month: int, preferred: int | None = None):
     if preferred and 1 <= preferred <= last_day:
         return preferred
     day = random.randint(2, min(last_day, 28))   # evita 29-31
-    dt = date_cls(year, month, day)
+    dt = date(year, month, day)
     if dt.weekday() == 6:                         # evita domenica
         day = max(2, day - 1)
     return day
@@ -742,7 +747,7 @@ def _safe_day(y: int, m: int, d: int) -> int:
     """Rende il giorno valido nel mese e MAI futuro se è il mese corrente."""
     last = calendar.monthrange(y, m)[1]
     d = max(1, min(d, last))
-    today = date_cls.today()
+    today = date.today()
     if y == today.year and m == today.month:
         d = min(d, today.day)
     return d
@@ -754,7 +759,7 @@ def _add_tx(*, account_id: str, y: int, m: int, d: int, desc: str,
     db = get_db()
     tx_id = _next_id("TRX", "transactions", "transaction_id")
     d = _safe_day(y, m, d)  # <<< evita date future
-    iso_date = date_cls(y, m, d).isoformat()
+    iso_date = date(y, m, d).isoformat()
     db.execute("""
         INSERT INTO transactions (transaction_id, account_id, piggy_id, date, description, category, type, amount)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -796,7 +801,7 @@ def seed_demo_12m():
     user_id, account_id, piggy_id = _ensure_demo_entities()
 
     # 1) Pulisci periodo target (ultimi 13 mesi per sicurezza)
-    cutoff = (date_cls.today().replace(day=1) - timedelta(days=370)).isoformat()
+    cutoff = (date.today().replace(day=1) - timedelta(days=370)).isoformat()
     db.execute("DELETE FROM transactions WHERE account_id=? AND date >= ?", (account_id, cutoff))
     db.execute("DELETE FROM piggy_transfers WHERE account_id=? AND date >= ?", (account_id, cutoff))
     db.commit()
@@ -835,7 +840,7 @@ def seed_demo_12m():
         # Stipendio (27 del mese o l'ultimo giorno lavorativo precedente)
         salary_amt = random.randint(salary_min, salary_max)
         d = min(27, calendar.monthrange(y, m)[1])
-        dt = date_cls(y, m, d)
+        dt = date(y, m, d)
         if dt.weekday() == 6:  # se domenica, anticipa di 1
             d -= 1
         net_flow += _add_tx(account_id=account_id, y=y, m=m, d=d,
@@ -925,7 +930,7 @@ def seed_demo_12m():
             _insert_piggy_transfer(
                 piggy_id=piggy_id, account_id=account_id, amount=100.0,
                 direction="TO_PIGGY", note="Accantonamento mensile",
-                tx_on_account=True, when=date_cls(y, m, d_pig).isoformat()
+                tx_on_account=True, when=date(y, m, d_pig).isoformat()
             )
         except Exception:
             pass
@@ -938,7 +943,7 @@ def seed_demo_12m():
                     piggy_id=piggy_id, account_id=account_id,
                     amount=random.choice([100.0, 150.0, 200.0]),
                     direction="FROM_PIGGY", note="Imprevisto estivo",
-                    tx_on_account=True, when=date_cls(y, m, d_imp).isoformat()
+                    tx_on_account=True, when=date(y, m, d_imp).isoformat()
                 )
             except Exception:
                 pass
@@ -973,7 +978,7 @@ def seed_demo_p2p_cmd():
 
 
 
-# --- Auth Utils ---
+# --- Authentication Utilities ---
 def login_required(view_func):
     from functools import wraps
     @wraps(view_func)
@@ -984,7 +989,7 @@ def login_required(view_func):
     return wrapped
 
 
-# --- Routes WEB ---
+# --- Auth Web ---
 @app.route('/')
 def index():
     if session.get('user_id'):
@@ -1037,6 +1042,7 @@ def logout():
     flash('Sei uscitə dall’account.', 'info')
     return redirect(url_for('login'))
 
+# --- Dashboard & Notifications ---
 @app.route('/dashboard')
 @login_required
 def dashboard():
@@ -1150,6 +1156,18 @@ def notifications_center():
 
 
 @app.get('/api/notifications')
+@swag_from({
+    "summary": "Lista notifiche utente",
+    "tags": ["Notifications"],
+    "parameters": [
+        {"name": "status", "in": "query", "schema": {"type": "string", "enum": ["READ", "UNREAD"]}},
+        {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 10}}
+    ],
+    "responses": {
+        "200": {"description": "Lista notifiche"},
+        "401": {"description": "Non autenticato"}
+    }
+})
 @login_required
 def api_notifications():
     user_id = session['user_id']
@@ -1164,6 +1182,31 @@ def api_notifications():
 
 
 @app.post('/api/notifications/<notification_id>')
+@swag_from({
+    "summary": "Aggiorna lo stato di una notifica",
+    "tags": ["Notifications"],
+    "parameters": [
+        {"name": "notification_id", "in": "path", "schema": {"type": "string"}, "required": True}
+    ],
+    "requestBody": {
+        "required": False,
+        "content": {
+            "application/json": {
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "status": {"type": "string", "enum": ["READ", "UNREAD"], "example": "READ"}
+                    }
+                }
+            }
+        }
+    },
+    "responses": {
+        "200": {"description": "Aggiornamento eseguito"},
+        "404": {"description": "Notifica non trovata"},
+        "401": {"description": "Non autenticato"}
+    }
+})
 @login_required
 def api_notification_update(notification_id: str):
     user_id = session['user_id']
@@ -1174,6 +1217,7 @@ def api_notification_update(notification_id: str):
     return jsonify({'message': 'not found'}), 404
 
 
+# --- Settings Web ---
 @app.route('/settings', methods=['GET', 'POST'])
 @login_required
 def settings():
@@ -1195,6 +1239,7 @@ def settings():
     return render_template('settings.html', settings=settings_data)
 
 
+# --- Piggy Bank Web ---
 @app.post("/piggy/create")
 @login_required
 def web_piggy_create():
@@ -1256,7 +1301,6 @@ def web_piggy_transfer():
 
     return redirect(url_for("dashboard"))
 
-# --- NEW: elimina salvadanaio (soft delete + riversamento) ---
 @app.post("/piggy/delete")
 @login_required
 def web_piggy_delete():
@@ -1290,7 +1334,7 @@ def web_piggy_delete():
     return redirect(url_for("dashboard"))
 
 
-# --- API (Swagger) ---
+# --- API Auth & Accounts ---
 
 @app.post("/api/login")
 @swag_from({
@@ -1437,6 +1481,7 @@ def api_transactions():
 
 
 
+# --- API Piggy Bank ---
 @app.get("/api/piggy-banks")
 @swag_from({
     "summary": "Lista salvadanai",
@@ -1552,7 +1597,6 @@ def api_piggy_transfer():
     db.commit()
     return jsonify({"message": "ok"})
 
-# --- API elimina salvadanaio ---
 @app.delete("/api/piggy/<piggy_id>")
 @swag_from({
     "summary": "Elimina un salvadanaio",
@@ -1590,6 +1634,7 @@ def api_piggy_delete(piggy_id):
     db.commit()
     return jsonify({"message": "deleted"})
 
+# --- API Contacts & Split Groups ---
 @app.get("/api/contacts")
 @swag_from({"summary": "Rubrica contatti P2P", "tags": ["P2P"]})
 def api_contacts():
@@ -1611,6 +1656,14 @@ def api_contacts():
 
 
 @app.get("/api/p2p/groups")
+@swag_from({
+    "summary": "Elenco gruppi di split P2P",
+    "tags": ["P2P"],
+    "responses": {
+        "200": {"description": "Gruppi recuperati"},
+        "401": {"description": "Non autenticato"}
+    }
+})
 def api_split_groups_list():
     if not session.get("user_id"):
         return jsonify({"message": "unauthenticated"}), 401
@@ -1619,6 +1672,29 @@ def api_split_groups_list():
 
 
 @app.post("/api/p2p/groups")
+@swag_from({
+    "summary": "Crea un nuovo gruppo di spesa condivisa",
+    "tags": ["P2P"],
+    "requestBody": {
+        "required": True,
+        "content": {
+            "application/json": {
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "example": "Weekend Roma"}
+                    },
+                    "required": ["name"]
+                }
+            }
+        }
+    },
+    "responses": {
+        "201": {"description": "Gruppo creato"},
+        "400": {"description": "Dati non validi"},
+        "401": {"description": "Non autenticato"}
+    }
+})
 def api_split_groups_create():
     if not session.get("user_id"):
         return jsonify({"message": "unauthenticated"}), 401
@@ -1648,6 +1724,18 @@ def api_split_groups_create():
 
 
 @app.delete("/api/p2p/groups/<group_id>")
+@swag_from({
+    "summary": "Elimina un gruppo P2P",
+    "tags": ["P2P"],
+    "parameters": [
+        {"name": "group_id", "in": "path", "schema": {"type": "string"}, "required": True}
+    ],
+    "responses": {
+        "200": {"description": "Gruppo eliminato"},
+        "404": {"description": "Gruppo non trovato"},
+        "401": {"description": "Non autenticato"}
+    }
+})
 def api_split_groups_delete(group_id: str):
     if not session.get("user_id"):
         return jsonify({"message": "unauthenticated"}), 401
@@ -1663,6 +1751,34 @@ def api_split_groups_delete(group_id: str):
 
 
 @app.post("/api/p2p/groups/<group_id>/members")
+@swag_from({
+    "summary": "Aggiunge un membro al gruppo",
+    "tags": ["P2P"],
+    "parameters": [
+        {"name": "group_id", "in": "path", "schema": {"type": "string"}, "required": True}
+    ],
+    "requestBody": {
+        "required": True,
+        "content": {
+            "application/json": {
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "contact_id": {"type": "string", "example": "CON001"}
+                    },
+                    "required": ["contact_id"]
+                }
+            }
+        }
+    },
+    "responses": {
+        "201": {"description": "Membro aggiunto"},
+        "400": {"description": "Contatto non valido"},
+        "401": {"description": "Non autenticato"},
+        "404": {"description": "Gruppo non trovato"},
+        "409": {"description": "Contatto già presente"}
+    }
+})
 def api_split_groups_add_member(group_id: str):
     if not session.get("user_id"):
         return jsonify({"message": "unauthenticated"}), 401
@@ -1706,6 +1822,19 @@ def api_split_groups_add_member(group_id: str):
 
 
 @app.delete("/api/p2p/groups/<group_id>/members/<member_id>")
+@swag_from({
+    "summary": "Rimuove un membro dal gruppo",
+    "tags": ["P2P"],
+    "parameters": [
+        {"name": "group_id", "in": "path", "schema": {"type": "string"}, "required": True},
+        {"name": "member_id", "in": "path", "schema": {"type": "string"}, "required": True}
+    ],
+    "responses": {
+        "200": {"description": "Membro eliminato"},
+        "404": {"description": "Risorsa non trovata"},
+        "401": {"description": "Non autenticato"}
+    }
+})
 def api_split_groups_remove_member(group_id: str, member_id: str):
     if not session.get("user_id"):
         return jsonify({"message": "unauthenticated"}), 401
@@ -1725,6 +1854,35 @@ def api_split_groups_remove_member(group_id: str, member_id: str):
 
 
 @app.post("/api/p2p/groups/<group_id>/split")
+@swag_from({
+    "summary": "Calcola e invia split su un gruppo",
+    "tags": ["P2P"],
+    "parameters": [
+        {"name": "group_id", "in": "path", "schema": {"type": "string"}, "required": True}
+    ],
+    "requestBody": {
+        "required": True,
+        "content": {
+            "application/json": {
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "amount": {"type": "number", "example": 120.0},
+                        "mode": {"type": "string", "enum": ["send", "request"], "example": "request"},
+                        "message": {"type": "string", "nullable": True}
+                    },
+                    "required": ["amount", "mode"]
+                }
+            }
+        }
+    },
+    "responses": {
+        "200": {"description": "Split completato"},
+        "400": {"description": "Dati non validi"},
+        "401": {"description": "Non autenticato"},
+        "404": {"description": "Gruppo non trovato"}
+    }
+})
 def api_split_groups_split(group_id: str):
     if not session.get("user_id"):
         return jsonify({"message": "unauthenticated"}), 401
@@ -1853,6 +2011,7 @@ def api_split_groups_split(group_id: str):
     )
     return jsonify({"message": "requested", "results": results, "mode": mode})
 
+# --- API P2P Transfers ---
 @app.post("/api/p2p/send")
 @swag_from({"summary": "Invio P2P interno istantaneo", "tags": ["P2P"], "requestBody": {"required": True}})
 def api_p2p_send():
@@ -1920,7 +2079,7 @@ def api_p2p_send():
         return jsonify({"message": str(e)}), 400
 
 
-# --- REPORT HELPERS ---
+# --- Reports Helpers ---
 
 def _date_from_months(months: int) -> str:
     """Ritorna la data (YYYY-MM-DD) spostata indietro di 'months' mesi circa (30 giorni * n)."""
@@ -2035,7 +2194,7 @@ def _report_summary(user_id: str, months: int = 3):
         }
     }
 
-# --- REPORT ROUTES ---
+# --- Reports Routes ---
 @app.route('/reports')
 @login_required
 def reports():
@@ -2048,6 +2207,17 @@ def reports():
     return render_template('report.html', report=data, months=months_int)
 
 @app.get('/api/reports/summary')
+@swag_from({
+    "summary": "Sintesi finanziaria per i report",
+    "tags": ["Reports"],
+    "parameters": [
+        {"name": "months", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 12, "default": 3}}
+    ],
+    "responses": {
+        "200": {"description": "Dati di report"},
+        "401": {"description": "Non autenticato"}
+    }
+})
 @login_required
 def api_report_summary():
     months = request.args.get('months', '3')
@@ -2059,7 +2229,7 @@ def api_report_summary():
     return jsonify(data)
 
 
-# --- P2P ROUTES ---
+# --- P2P Web ---
 @app.route("/p2p")
 @login_required
 def p2p():
@@ -2089,6 +2259,6 @@ def p2p():
     return render_template("p2p.html", accounts=accounts, contacts=contacts, p2p_tx=p2p_tx)
 
 
-# --- Avvio ---
+# --- Application Entrypoint ---
 if __name__ == '__main__':
     app.run(debug=True)
