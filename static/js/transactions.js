@@ -108,13 +108,13 @@
 
     if (!Array.isArray(items) || items.length === 0) {
       tbody.innerHTML = "";
-      empty.classList.remove("d-none");
+      if (empty) empty.classList.remove("d-none");
       updatePager(0);
       updateDot();
       return;
     }
 
-    empty.classList.add("d-none");
+    if (empty) empty.classList.add("d-none");
     tbody.innerHTML = items.map(rowHTML).join("");
     updatePager(items.length);
     updateDot();

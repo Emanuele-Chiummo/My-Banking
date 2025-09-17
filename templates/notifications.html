@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Notifiche — BankApp{% endblock %}
+
+{% block content %}
+<section class="row justify-content-center g-4">
+  <div class="col-12 col-xl-10">
+    <div class="card p-4 shadow-lg border-0">
+      <div class="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-3 mb-4">
+        <div>
+          <h1 class="h4 mb-1">Centro notifiche</h1>
+          <p class="text-muted mb-0">Tieni sotto controllo alert automatici e messaggi di sistema.</p>
+        </div>
+        <div class="btn-group" role="group" aria-label="Filtri notifiche">
+          <a class="btn btn-outline-secondary btn-sm {% if not status_filter %}active{% endif %}" href="{{ url_for('notifications_center') }}">Tutte</a>
+          <a class="btn btn-outline-secondary btn-sm {% if status_filter == 'UNREAD' %}active{% endif %}" href="{{ url_for('notifications_center', status='UNREAD') }}">Non lette</a>
+          <a class="btn btn-outline-secondary btn-sm {% if status_filter == 'READ' %}active{% endif %}" href="{{ url_for('notifications_center', status='READ') }}">Archivio</a>
+        </div>
+      </div>
+
+      {% if notifications %}
+      <div class="notification-list">
+        {% for note in notifications %}
+        <div class="list-group-item d-flex flex-column flex-md-row justify-content-between align-items-start gap-3 {% if note.status == 'UNREAD' %}notification-unread{% endif %}">
+          <div>
+            <div class="fw-semibold">{{ note.title }}</div>
+            {% if note.body %}<div class="text-muted">{{ note.body }}</div>{% endif %}
+            <div class="small text-muted mt-1">{{ note.created_at }}</div>
+          </div>
+          <form method="post" class="d-flex gap-2">
+            <input type="hidden" name="notification_id" value="{{ note.notification_id }}">
+            {% if note.status == 'UNREAD' %}
+            <button class="btn btn-outline-secondary btn-sm" name="action" value="read" type="submit">Segna letta</button>
+            {% else %}
+            <button class="btn btn-outline-secondary btn-sm" name="action" value="unread" type="submit">Rendi non letta</button>
+            {% endif %}
+          </form>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="text-center text-muted py-5">Nessuna notifica disponibile.</div>
+      {% endif %}
+    </div>
+  </div>
+</section>
+{% endblock %}

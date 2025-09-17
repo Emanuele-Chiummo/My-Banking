@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Impostazioni — BankApp{% endblock %}
+
+{% block content %}
+<section class="row justify-content-center g-4">
+  <div class="col-12 col-lg-8 col-xl-6">
+    <div class="card p-4 shadow-lg border-0 settings-card">
+      <div class="mb-4">
+        <h1 class="h4 mb-1">Preferenze personali</h1>
+        <p class="text-muted mb-0">Configura valuta di default, precisione e soglie di allerta.</p>
+      </div>
+      <form method="post" class="d-grid gap-4" id="settingsForm">
+        <div>
+          <label class="form-label">Valuta predefinita</label>
+          {% set currency = (settings.default_currency or 'EUR') | upper %}
+          <select class="form-select" name="default_currency">
+            <option value="EUR" {% if currency == 'EUR' %}selected{% endif %}>Euro (EUR)</option>
+            <option value="USD" {% if currency == 'USD' %}selected{% endif %}>Dollaro USA (USD)</option>
+            <option value="GBP" {% if currency == 'GBP' %}selected{% endif %}>Sterlina (GBP)</option>
+          </select>
+          <div class="form-text">Impatta formattazione e default per nuovi obiettivi.</div>
+        </div>
+        <div>
+          <label class="form-label">Numero decimali</label>
+          <input type="number" class="form-control" name="decimal_places" min="0" max="4" value="{{ settings.decimal_places or 2 }}">
+          <div class="form-text">Scegli il livello di precisione degli importi.</div>
+        </div>
+        <div>
+          <label class="form-label">Soglia notifiche</label>
+          <div class="input-group">
+            <input type="number" class="form-control" name="notify_threshold" step="0.05" min="0.5" max="2" value="{{ settings.notify_threshold or 1.0 }}">
+            <span class="input-group-text">x</span>
+          </div>
+          <div class="form-text">Valore moltiplicativo rispetto al ritmo atteso prima di un alert.</div>
+        </div>
+        <div class="d-flex justify-content-end gap-2">
+          <a class="btn btn-outline-secondary" href="{{ url_for('dashboard') }}">Annulla</a>
+          <button class="btn btn-primary" type="submit">Salva impostazioni</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</section>
+{% endblock %}

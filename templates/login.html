@@ -4,32 +4,26 @@
 {% block content %}
 <div class="row justify-content-center">
   <div class="col-12 col-md-6 col-lg-4">
-    <div class="card shadow-sm border-0 rounded-3">
-      <div class="card-body p-4">
-        <h1 class="h4 mb-3 text-center">Accesso</h1>
-        <p class="text-secondary small text-center mb-4">
-          Inserisci <strong>codice utente</strong> e <strong>password</strong>.
-        </p>
-        <form method="post" novalidate>
-          <div class="mb-3">
-            <label for="codice_cliente" class="form-label">Codice utente</label>
-            <input type="text" class="form-control" id="codice_cliente" name="codice_cliente"
-                   placeholder="Es. 123456" autocomplete="username" required>
-          </div>
-          <div class="mb-3">
-            <label for="password" class="form-label">Password</label>
-            <input type="password" class="form-control" id="password" name="password"
-                   placeholder="••••••••" autocomplete="current-password" required>
-          </div>
-          <button class="btn btn-primary w-100" type="submit">Entra</button>
-        </form>
-
-        <hr class="my-4">
-        <div class="small text-muted">
-          <strong>Demo</strong><br>
-          Codice: <code>123456</code><br>
-          Password: <code>Password123!</code>
+    <div class="card p-4 shadow-lg border-0">
+      <div class="text-center mb-4">
+        <div class="avatar-circle mb-3" style="width:56px;height:56px;font-size:1.1rem;">BA</div>
+        <h1 class="h4 mb-1">Bentornato/a</h1>
+        <p class="text-muted">Accedi per gestire conti, notifiche e pagamenti.</p>
+      </div>
+      <form method="post" class="d-grid gap-3" novalidate>
+        <div>
+          <label for="codice_cliente" class="form-label">Codice utente</label>
+          <input type="text" class="form-control" id="codice_cliente" name="codice_cliente" placeholder="Es. 123456" autocomplete="username" required>
         </div>
+        <div>
+          <label for="password" class="form-label">Password</label>
+          <input type="password" class="form-control" id="password" name="password" placeholder="••••••••" autocomplete="current-password" required>
+        </div>
+        <button class="btn btn-primary w-100" type="submit">Accedi</button>
+      </form>
+      <div class="rounded-4 bg-light p-3 mt-4 text-muted small">
+        <strong>Demo rapida</strong><br>
+        Codice: <code>123456</code> &nbsp;•&nbsp; Password: <code>Password123!</code>
       </div>
     </div>
   </div>

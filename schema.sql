@@ -75,6 +75,26 @@ CREATE TABLE IF NOT EXISTS contacts (
   FOREIGN KEY (owner_user_id) REFERENCES users(user_id)
 );
 
+-- Gruppi per split di spesa (tipo Splitwise)
+CREATE TABLE IF NOT EXISTS split_groups (
+  group_id   TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now')),
+  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS split_group_members (
+  member_id    TEXT PRIMARY KEY,
+  group_id     TEXT NOT NULL,
+  contact_id   TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  created_at   TEXT DEFAULT (datetime('now')),
+  FOREIGN KEY (group_id) REFERENCES split_groups(group_id) ON DELETE CASCADE,
+  FOREIGN KEY (contact_id) REFERENCES contacts(contact_id) ON DELETE CASCADE,
+  UNIQUE (group_id, contact_id)
+);
+
 -- Trasferimenti P2P interni (istantanei)
 CREATE TABLE IF NOT EXISTS p2p_transfers (
   p2p_id           TEXT PRIMARY KEY,
@@ -97,3 +117,35 @@ CREATE INDEX IF NOT EXISTS idx_accounts_user ON accounts(user_id);
 CREATE INDEX IF NOT EXISTS idx_piggy_user    ON piggy_banks(user_id);
 CREATE INDEX IF NOT EXISTS idx_trx_account   ON transactions(account_id);
 CREATE INDEX IF NOT EXISTS idx_trx_piggy     ON transactions(piggy_id);
+CREATE INDEX IF NOT EXISTS idx_split_groups_user ON split_groups(user_id);
+CREATE INDEX IF NOT EXISTS idx_split_members_group ON split_group_members(group_id);
+
+-- Notifiche utente (badge nella UI)
+CREATE TABLE IF NOT EXISTS notifications (
+  notification_id TEXT PRIMARY KEY,
+  user_id         TEXT NOT NULL,
+  type            TEXT NOT NULL,
+  title           TEXT NOT NULL,
+  body            TEXT,
+  status          TEXT NOT NULL DEFAULT 'UNREAD',
+  dedupe_key      TEXT,
+  payload         TEXT,
+  created_at      TEXT DEFAULT (datetime('now')),
+  read_at         TEXT,
+  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_user   ON notifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_status ON notifications(status);
+CREATE INDEX IF NOT EXISTS idx_notifications_dedupe ON notifications(dedupe_key);
+
+-- Preferenze utente (valuta, formato numerico, soglie alert)
+CREATE TABLE IF NOT EXISTS user_settings (
+  user_id          TEXT PRIMARY KEY,
+  default_currency TEXT NOT NULL DEFAULT 'EUR',
+  decimal_places   INTEGER NOT NULL DEFAULT 2,
+  notify_threshold REAL NOT NULL DEFAULT 1.0,
+  created_at       TEXT DEFAULT (datetime('now')),
+  updated_at       TEXT DEFAULT (datetime('now')),
+  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);

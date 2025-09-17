@@ -1,12 +1,17 @@
+from __future__ import annotations
+
+import json
 import sqlite3
 import re
-from datetime import date
+from datetime import date, datetime, timedelta
+from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 from pathlib import Path
 from io import BytesIO
 from flask import (
     Flask, render_template, request, redirect,
     url_for, session, flash, g, jsonify, send_file
 )
+from werkzeug.routing import BuildError
 from werkzeug.security import generate_password_hash, check_password_hash
 
 # --- Swagger ---
@@ -103,6 +108,235 @@ def _ensure_contact_for(owner_user_id: str, target_user_id: str, target_account_
         INSERT INTO contacts (contact_id, owner_user_id, display_name, target_user_id, target_account_id)
         VALUES (?, ?, ?, ?, ?)
     """, (contact_id, owner_user_id, display_name, target_user_id, target_account_id))
+
+
+# --- Notifiche & impostazioni utente ------------------------------------
+
+def _ensure_notification(*, user_id: str, type_: str, title: str,
+                         body: str | None = None, dedupe_key: str | None = None,
+                         payload: dict | None = None) -> str:
+    db = get_db()
+    payload_json = json.dumps(payload or {})
+
+    if dedupe_key:
+        existing = db.execute(
+            """
+            SELECT notification_id, status FROM notifications
+            WHERE user_id = ? AND dedupe_key = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (user_id, dedupe_key),
+        ).fetchone()
+        if existing:
+            db.execute(
+                """
+                UPDATE notifications
+                SET body = COALESCE(?, body),
+                    payload = ?,
+                    created_at = CASE WHEN status = 'UNREAD' THEN datetime('now') ELSE created_at END
+                WHERE notification_id = ?
+                """,
+                (body, payload_json, existing["notification_id"]),
+            )
+            db.commit()
+            return existing["notification_id"]
+
+    notification_id = _next_id("NOT", "notifications", "notification_id")
+    db.execute(
+        """
+        INSERT INTO notifications (notification_id, user_id, type, title, body, status, dedupe_key, payload)
+        VALUES (?, ?, ?, ?, ?, 'UNREAD', ?, ?)
+        """,
+        (notification_id, user_id, type_, title, body, dedupe_key, payload_json),
+    )
+    db.commit()
+    return notification_id
+
+
+def _clear_notification_by_dedupe(*, user_id: str, dedupe_key: str) -> None:
+    if not dedupe_key:
+        return
+    db = get_db()
+    db.execute(
+        """
+        UPDATE notifications
+        SET status = 'READ', read_at = datetime('now')
+        WHERE user_id = ? AND dedupe_key = ? AND status = 'UNREAD'
+        """,
+        (user_id, dedupe_key),
+    )
+    db.commit()
+
+
+def _list_notifications(user_id: str, limit: int = 10, status: str | None = None) -> list[sqlite3.Row]:
+    db = get_db()
+    params = [user_id]
+    where = ["user_id = ?"]
+    if status in {"UNREAD", "READ"}:
+        where.append("status = ?")
+        params.append(status)
+    sql = f"""
+        SELECT notification_id, type, title, body, status, payload, created_at, read_at
+        FROM notifications
+        WHERE {' AND '.join(where)}
+        ORDER BY created_at DESC
+        LIMIT ?
+    """
+    params.append(limit)
+    rows = db.execute(sql, params).fetchall()
+    result = []
+    for row in rows:
+        payload = row["payload"]
+        try:
+            payload_data = json.loads(payload) if payload else {}
+        except json.JSONDecodeError:
+            payload_data = {"raw": payload}
+        result.append({**dict(row), "payload": payload_data})
+    return result
+
+
+def _count_unread_notifications(user_id: str) -> int:
+    db = get_db()
+    row = db.execute(
+        "SELECT COUNT(1) AS cnt FROM notifications WHERE user_id = ? AND status = 'UNREAD'",
+        (user_id,),
+    ).fetchone()
+    return int(row["cnt"] or 0)
+
+
+def _mark_notification(user_id: str, notification_id: str, status: str) -> bool:
+    if status not in {"READ", "UNREAD"}:
+        return False
+    db = get_db()
+    res = db.execute(
+        """
+        UPDATE notifications
+        SET status = ?, read_at = CASE WHEN ? = 'READ' THEN datetime('now') ELSE NULL END
+        WHERE notification_id = ? AND user_id = ?
+        """,
+        (status, status, notification_id, user_id),
+    )
+    db.commit()
+    return res.rowcount > 0
+
+
+def _ensure_user_settings(user_id: str) -> sqlite3.Row:
+    db = get_db()
+    settings = db.execute(
+        """
+        SELECT user_id, default_currency, decimal_places, notify_threshold
+        FROM user_settings
+        WHERE user_id = ?
+        """,
+        (user_id,),
+    ).fetchone()
+    if settings:
+        return settings
+    db.execute(
+        """
+        INSERT INTO user_settings (user_id, default_currency, decimal_places, notify_threshold)
+        VALUES (?, 'EUR', 2, 1.0)
+        """,
+        (user_id,),
+    )
+    db.commit()
+    return db.execute(
+        "SELECT user_id, default_currency, decimal_places, notify_threshold FROM user_settings WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
+
+
+def _get_user_settings(user_id: str) -> dict:
+    settings = _ensure_user_settings(user_id)
+    return dict(settings) if settings else {"user_id": user_id, "default_currency": "EUR", "decimal_places": 2, "notify_threshold": 1.0}
+
+
+def _update_user_settings(user_id: str, *, default_currency: str, decimal_places: int, notify_threshold: float) -> dict:
+    currency = (default_currency or "EUR").upper()
+    if currency not in {"EUR", "USD", "GBP"}:
+        currency = "EUR"
+    try:
+        decimals = max(0, min(int(decimal_places), 4))
+    except (TypeError, ValueError):
+        decimals = 2
+    try:
+        threshold = float(notify_threshold)
+    except (TypeError, ValueError):
+        threshold = 1.0
+    if threshold <= 0:
+        threshold = 1.0
+
+    db = get_db()
+    db.execute(
+        """
+        INSERT INTO user_settings (user_id, default_currency, decimal_places, notify_threshold)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+          default_currency = excluded.default_currency,
+          decimal_places   = excluded.decimal_places,
+          notify_threshold = excluded.notify_threshold,
+          updated_at       = datetime('now')
+        """,
+        (user_id, currency, decimals, threshold),
+    )
+    db.commit()
+    return _get_user_settings(user_id)
+
+
+NAV_PRIMARY_LINKS = [
+    {
+        "endpoint": "dashboard",
+        "label": "Dashboard",
+        "icon": "bi-speedometer2",
+        "match": "dashboard",
+    },
+    {
+        "endpoint": "reports",
+        "label": "Report",
+        "icon": "bi-graph-up",
+        "match": "reports",
+    },
+    {
+        "endpoint": "p2p",
+        "label": "P2P",
+        "icon": "bi-people",
+        "match": "p2p",
+    },
+]
+
+
+@app.context_processor
+def inject_global_context():
+    if not session.get("user_id"):
+        return {
+            "nav_links": [],
+        }
+    user_id = session["user_id"]
+    settings = _get_user_settings(user_id)
+    items = _list_notifications(user_id, limit=5)
+    unread = sum(1 for note in items if note.get("status") == "UNREAD")
+    links = []
+    for item in NAV_PRIMARY_LINKS:
+        try:
+            link_url = url_for(item["endpoint"])
+        except BuildError:
+            link_url = None
+        links.append({
+            "label": item["label"],
+            "icon": item.get("icon"),
+            "endpoint": item["endpoint"],
+            "match": item.get("match", item["endpoint"]),
+            "url": link_url,
+        })
+    return {
+        "user_settings": settings,
+        "nav_notifications": {
+            "items": items,
+            "unread": unread,
+        },
+        "nav_links": links,
+    }
 
 @app.cli.command("seed-demo-more-users")
 def seed_demo_more_users():
@@ -247,6 +481,91 @@ def _ensure_contact(owner_user_id: str, contact_id: str):
         FROM contacts
         WHERE owner_user_id = ? AND contact_id = ?
     """, (owner_user_id, contact_id)).fetchone()
+
+
+def _list_split_groups(user_id: str) -> list[dict]:
+    db = get_db()
+    groups = db.execute(
+        """
+        SELECT group_id, name, created_at
+        FROM split_groups
+        WHERE user_id = ?
+        ORDER BY created_at DESC
+        """,
+        (user_id,),
+    ).fetchall()
+    if not groups:
+        return []
+    ids = [g["group_id"] for g in groups]
+    placeholders = ",".join(["?"] * len(ids))
+    members_rows = db.execute(
+        f"""
+        SELECT m.member_id, m.group_id, m.contact_id, m.display_name, c.target_user_id, c.target_account_id
+        FROM split_group_members m
+        JOIN contacts c ON c.contact_id = m.contact_id
+        WHERE c.owner_user_id = ? AND m.group_id IN ({placeholders})
+        ORDER BY m.created_at ASC
+        """,
+        (user_id, *ids),
+    ).fetchall()
+    members_by_group: dict[str, list[dict]] = {gid: [] for gid in ids}
+    for row in members_rows:
+        members_by_group[row["group_id"]].append({
+            "member_id": row["member_id"],
+            "contact_id": row["contact_id"],
+            "display_name": row["display_name"],
+            "target_user_id": row["target_user_id"],
+            "target_account_id": row["target_account_id"],
+        })
+    return [
+        {
+            "group_id": g["group_id"],
+            "name": g["name"],
+            "created_at": g["created_at"],
+            "members": members_by_group.get(g["group_id"], []),
+        }
+        for g in groups
+    ]
+
+
+def _get_split_group(user_id: str, group_id: str):
+    db = get_db()
+    return db.execute(
+        """
+        SELECT group_id, name
+        FROM split_groups
+        WHERE user_id = ? AND group_id = ?
+        """,
+        (user_id, group_id),
+    ).fetchone()
+
+
+def _get_split_members(user_id: str, group_id: str) -> list[sqlite3.Row]:
+    db = get_db()
+    return db.execute(
+        """
+        SELECT m.member_id, m.group_id, m.contact_id, m.display_name,
+               c.target_user_id, c.target_account_id
+        FROM split_group_members m
+        JOIN contacts c ON c.contact_id = m.contact_id
+        WHERE m.group_id = ? AND c.owner_user_id = ?
+        ORDER BY m.created_at ASC
+        """,
+        (group_id, user_id),
+    ).fetchall()
+
+
+def _split_even(amount: Decimal, count: int) -> list[Decimal]:
+    """Dividi amount in count quote (centesimi) restituendo una lista di Decimal."""
+    if count <= 0:
+        return []
+    cents_total = int((amount * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    base = cents_total // count
+    remainder = cents_total - base * count
+    shares = [base] * count
+    for idx in range(remainder):
+        shares[idx] += 1
+    return [Decimal(s) / Decimal(100) for s in shares]
 
 def _p2p_instant(*, from_account_id: str, to_account_id: str, amount: float,
                  message: str | None, from_user_id: str, to_user_id: str,
@@ -696,6 +1015,14 @@ def login():
             session['user_id'] = user['user_id']
             session['codice_cliente'] = user['codice_cliente']
             session['display_name'] = f"{user['first_name']} {user['last_name']}".strip()
+            _ensure_user_settings(user['user_id'])
+            _ensure_notification(
+                user_id=user['user_id'],
+                type_='LOGIN',
+                title='Nuovo accesso eseguito',
+                body='Login completato con successo.',
+                dedupe_key='login:last',
+            )
             flash('Accesso effettuato!', 'success')
             next_url = request.args.get('next') or url_for('dashboard')
             return redirect(next_url)
@@ -739,14 +1066,134 @@ def dashboard():
         LIMIT 10
     """, (user_id,)).fetchall()
 
+    settings = _get_user_settings(user_id)
+
+    dash_payload = {
+        "account": {
+            "name": (accounts[0]["name"] if accounts else None),
+            "balance": float(accounts[0]["balance"] if accounts else 0.0),
+            "currency": accounts[0]["currency"] if accounts else "EUR",
+        },
+        "piggies": [
+            {
+                "name": p["name"],
+                "current": float(p["current_amount"] or 0.0),
+                "target": float(p["target_amount"] or 0.0),
+            }
+            for p in piggies
+        ],
+        "transactions": [
+            {
+                "date": t["date"],
+                "amount": float(t["amount"] or 0.0),
+            }
+            for t in transactions
+        ],
+    }
+
+    # Notifica se un salvadanaio raggiunge il target
+    for piggy in piggies:
+        target = piggy['target_amount']
+        current = float(piggy['current_amount'] or 0.0)
+        if target and current >= float(target) - 1e-6:
+            _ensure_notification(
+                user_id=user_id,
+                type_='PIGGY_TARGET',
+                title=f"Obiettivo '{piggy['name']}' raggiunto",
+                body=f"Hai accumulato {current:.2f}€ su un target di {float(target):.2f}€.",
+                dedupe_key=f"piggy:target:{piggy['piggy_id']}",
+                payload={'piggy_id': piggy['piggy_id'], 'current': current, 'target': float(target)},
+            )
+        else:
+            _clear_notification_by_dedupe(user_id=user_id, dedupe_key=f"piggy:target:{piggy['piggy_id']}")
+
+    notifications = _list_notifications(user_id, limit=10)
+    unread_count = _count_unread_notifications(user_id)
+
     return render_template(
         'dashboard.html',
         display_name=session.get('display_name') or session.get('codice_cliente'),
         codice_cliente=session.get('codice_cliente'),
         accounts=accounts,
         piggies=piggies,
-        transactions=transactions
+        transactions=transactions,
+        notifications=notifications,
+        unread_notifications=unread_count,
+        settings=settings,
+        dash_payload=dash_payload,
     )
+
+
+@app.route('/notifications', methods=['GET', 'POST'])
+@login_required
+def notifications_center():
+    user_id = session['user_id']
+    if request.method == 'POST':
+        notification_id = request.form.get('notification_id')
+        action = (request.form.get('action') or 'read').upper()
+        status = 'UNREAD' if action == 'UNREAD' else 'READ'
+        if notification_id and _mark_notification(user_id, notification_id, status):
+            flash('Notifica aggiornata.', 'success')
+        else:
+            flash('Impossibile aggiornare la notifica selezionata.', 'danger')
+        return redirect(url_for('notifications_center'))
+
+    status_filter = request.args.get('status')
+    items = _list_notifications(user_id, limit=50, status=status_filter if status_filter in {'READ', 'UNREAD'} else None)
+    unread_count = _count_unread_notifications(user_id)
+    return render_template(
+        'notifications.html',
+        notifications=items,
+        unread_notifications=unread_count,
+        status_filter=status_filter,
+    )
+
+
+@app.get('/api/notifications')
+@login_required
+def api_notifications():
+    user_id = session['user_id']
+    status_filter = request.args.get('status')
+    limit = request.args.get('limit', 10)
+    try:
+        limit_int = max(1, min(int(limit), 100))
+    except (TypeError, ValueError):
+        limit_int = 10
+    items = _list_notifications(user_id, limit=limit_int, status=status_filter if status_filter in {'READ', 'UNREAD'} else None)
+    return jsonify({'items': items, 'unread': _count_unread_notifications(user_id)})
+
+
+@app.post('/api/notifications/<notification_id>')
+@login_required
+def api_notification_update(notification_id: str):
+    user_id = session['user_id']
+    data = request.get_json(silent=True) or {}
+    status = (data.get('status') or 'READ').upper()
+    if _mark_notification(user_id, notification_id, 'UNREAD' if status == 'UNREAD' else 'READ'):
+        return jsonify({'message': 'ok', 'unread': _count_unread_notifications(user_id)})
+    return jsonify({'message': 'not found'}), 404
+
+
+@app.route('/settings', methods=['GET', 'POST'])
+@login_required
+def settings():
+    user_id = session['user_id']
+    if request.method == 'POST':
+        default_currency = request.form.get('default_currency', 'EUR')
+        decimal_places = request.form.get('decimal_places', 2)
+        notify_threshold = request.form.get('notify_threshold', 1.0)
+        _update_user_settings(
+            user_id,
+            default_currency=default_currency,
+            decimal_places=decimal_places,
+            notify_threshold=notify_threshold,
+        )
+        flash('Impostazioni aggiornate.', 'success')
+        return redirect(url_for('settings'))
+
+    settings_data = _get_user_settings(user_id)
+    return render_template('settings.html', settings=settings_data)
+
 
 @app.post("/piggy/create")
 @login_required
@@ -1162,6 +1609,250 @@ def api_contacts():
     """, params).fetchall()
     return jsonify([dict(r) for r in rows])
 
+
+@app.get("/api/p2p/groups")
+def api_split_groups_list():
+    if not session.get("user_id"):
+        return jsonify({"message": "unauthenticated"}), 401
+    groups = _list_split_groups(session["user_id"])
+    return jsonify({"groups": groups})
+
+
+@app.post("/api/p2p/groups")
+def api_split_groups_create():
+    if not session.get("user_id"):
+        return jsonify({"message": "unauthenticated"}), 401
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"message": "name richiesto"}), 400
+    user_id = session["user_id"]
+    group_id = _next_id("SPG", "split_groups", "group_id")
+    db = get_db()
+    db.execute(
+        """
+        INSERT INTO split_groups (group_id, user_id, name)
+        VALUES (?, ?, ?)
+        """,
+        (group_id, user_id, name),
+    )
+    db.commit()
+    return jsonify({
+        "message": "created",
+        "group": {
+            "group_id": group_id,
+            "name": name,
+            "members": [],
+        },
+    }), 201
+
+
+@app.delete("/api/p2p/groups/<group_id>")
+def api_split_groups_delete(group_id: str):
+    if not session.get("user_id"):
+        return jsonify({"message": "unauthenticated"}), 401
+    db = get_db()
+    res = db.execute(
+        "DELETE FROM split_groups WHERE group_id = ? AND user_id = ?",
+        (group_id, session["user_id"]),
+    )
+    if res.rowcount == 0:
+        return jsonify({"message": "not found"}), 404
+    db.commit()
+    return jsonify({"message": "deleted"})
+
+
+@app.post("/api/p2p/groups/<group_id>/members")
+def api_split_groups_add_member(group_id: str):
+    if not session.get("user_id"):
+        return jsonify({"message": "unauthenticated"}), 401
+    user_id = session["user_id"]
+    group = _get_split_group(user_id, group_id)
+    if not group:
+        return jsonify({"message": "not found"}), 404
+    data = request.get_json(silent=True) or {}
+    contact_id = data.get("contact_id")
+    if not contact_id:
+        return jsonify({"message": "contact_id richiesto"}), 400
+    contact = _ensure_contact(user_id, contact_id)
+    if not contact:
+        return jsonify({"message": "contatto non valido"}), 400
+    if not contact["target_user_id"] or not contact["target_account_id"]:
+        return jsonify({"message": "il contatto selezionato non supporta richieste P2P interne"}), 400
+    db = get_db()
+    dup = db.execute(
+        "SELECT 1 FROM split_group_members WHERE group_id = ? AND contact_id = ?",
+        (group_id, contact_id),
+    ).fetchone()
+    if dup:
+        return jsonify({"message": "contatto già nel gruppo"}), 409
+    member_id = _next_id("SPM", "split_group_members", "member_id")
+    db.execute(
+        """
+        INSERT INTO split_group_members (member_id, group_id, contact_id, display_name)
+        VALUES (?, ?, ?, ?)
+        """,
+        (member_id, group_id, contact_id, contact["display_name"]),
+    )
+    db.commit()
+    return jsonify({
+        "message": "added",
+        "member": {
+            "member_id": member_id,
+            "contact_id": contact_id,
+            "display_name": contact["display_name"],
+        },
+    }), 201
+
+
+@app.delete("/api/p2p/groups/<group_id>/members/<member_id>")
+def api_split_groups_remove_member(group_id: str, member_id: str):
+    if not session.get("user_id"):
+        return jsonify({"message": "unauthenticated"}), 401
+    user_id = session["user_id"]
+    group = _get_split_group(user_id, group_id)
+    if not group:
+        return jsonify({"message": "not found"}), 404
+    db = get_db()
+    res = db.execute(
+        "DELETE FROM split_group_members WHERE member_id = ? AND group_id = ?",
+        (member_id, group_id),
+    )
+    if res.rowcount == 0:
+        return jsonify({"message": "not found"}), 404
+    db.commit()
+    return jsonify({"message": "deleted"})
+
+
+@app.post("/api/p2p/groups/<group_id>/split")
+def api_split_groups_split(group_id: str):
+    if not session.get("user_id"):
+        return jsonify({"message": "unauthenticated"}), 401
+    user_id = session["user_id"]
+    group = _get_split_group(user_id, group_id)
+    if not group:
+        return jsonify({"message": "not found"}), 404
+    data = request.get_json(silent=True) or {}
+    raw_amount = data.get("amount")
+    mode = (data.get("mode") or "").lower()
+    message = (data.get("message") or "").strip() or None
+    if mode not in {"send", "request"}:
+        return jsonify({"message": "mode deve essere 'send' o 'request'"}), 400
+    try:
+        amount = Decimal(str(raw_amount))
+    except (TypeError, ValueError, InvalidOperation):
+        return jsonify({"message": "amount non valido"}), 400
+    if amount <= 0:
+        return jsonify({"message": "amount deve essere > 0"}), 400
+
+    members = _get_split_members(user_id, group_id)
+    if not members:
+        return jsonify({"message": "il gruppo non ha membri"}), 400
+
+    shares = _split_even(amount, len(members))
+    results = []
+    owner_name = session.get("display_name") or session.get("codice_cliente") or "Utente"
+
+    if mode == "send":
+        from_account_id = data.get("from_account_id")
+        if not from_account_id:
+            return jsonify({"message": "from_account_id richiesto per mode=send"}), 400
+        db = get_db()
+        account = db.execute(
+            "SELECT balance FROM accounts WHERE account_id = ? AND user_id = ?",
+            (from_account_id, user_id),
+        ).fetchone()
+        if not account:
+            return jsonify({"message": "conto mittente non valido"}), 400
+        total_out = sum(shares)
+        balance = Decimal(str(account["balance"] or 0))
+        if balance < total_out:
+            return jsonify({"message": "saldo insufficiente per coprire tutte le quote"}), 400
+
+        for row, share in zip(members, shares):
+            share_float = float(share)
+            try:
+                p2p_id = _p2p_instant(
+                    from_account_id=from_account_id,
+                    to_account_id=row["target_account_id"],
+                    amount=share_float,
+                    message=message,
+                    from_user_id=user_id,
+                    to_user_id=row["target_user_id"],
+                    to_name=row["display_name"],
+                    from_name=owner_name,
+                )
+            except ValueError as exc:
+                return jsonify({"message": str(exc)}), 400
+            _ensure_user_settings(row["target_user_id"])
+            _ensure_notification(
+                user_id=user_id,
+                type_="P2P_SENT",
+                title="Trasferimento inviato",
+                body=f"Hai inviato {share_float:.2f}€ a {row['display_name']} per {group['name']}.",
+                dedupe_key=f"p2p:split:sent:{p2p_id}",
+                payload={
+                    "p2p_id": p2p_id,
+                    "group_id": group_id,
+                    "amount": share_float,
+                    "member_id": row["member_id"],
+                },
+            )
+            _ensure_notification(
+                user_id=row["target_user_id"],
+                type_="P2P_RECEIVED",
+                title="Hai ricevuto un trasferimento",
+                body=f"{owner_name} ti ha inviato {share_float:.2f}€ (gruppo {group['name']}).",
+                dedupe_key=f"p2p:split:recv:{p2p_id}",
+                payload={
+                    "p2p_id": p2p_id,
+                    "group_id": group_id,
+                    "amount": share_float,
+                },
+            )
+            results.append({
+                "member_id": row["member_id"],
+                "contact_id": row["contact_id"],
+                "display_name": row["display_name"],
+                "amount": round(share_float, 2),
+                "status": "sent",
+                "p2p_id": p2p_id,
+            })
+        return jsonify({"message": "sent", "results": results, "mode": mode})
+
+    for row, share in zip(members, shares):
+        share_float = float(share)
+        _ensure_user_settings(row["target_user_id"])
+        notif_id = _ensure_notification(
+            user_id=row["target_user_id"],
+            type_="P2P_REQUEST",
+            title=f"Richiesta rimborso gruppo {group['name']}",
+            body=f"{owner_name} chiede {share_float:.2f}€ per una spesa condivisa.",
+            payload={
+                "group_id": group_id,
+                "origin_user": user_id,
+                "amount": share_float,
+                "message": message,
+            },
+        )
+        results.append({
+            "member_id": row["member_id"],
+            "contact_id": row["contact_id"],
+            "display_name": row["display_name"],
+            "amount": round(share_float, 2),
+            "status": "requested",
+            "notification_id": notif_id,
+        })
+
+    _ensure_notification(
+        user_id=user_id,
+        type_="P2P_REQUEST",
+        title=f"Richieste inviate per {group['name']}",
+        body=f"Hai chiesto {float(amount):.2f}€ da {len(members)} persone.",
+        payload={"group_id": group_id, "amount": float(amount)},
+    )
+    return jsonify({"message": "requested", "results": results, "mode": mode})
+
 @app.post("/api/p2p/send")
 @swag_from({"summary": "Invio P2P interno istantaneo", "tags": ["P2P"], "requestBody": {"required": True}})
 def api_p2p_send():
@@ -1206,13 +1897,30 @@ def api_p2p_send():
             to_name=to_name,
             from_name=session.get("display_name")  # opzionale
         )
+        _ensure_notification(
+            user_id=session['user_id'],
+            type_='P2P_SENT',
+            title='Trasferimento inviato',
+            body=f"Hai inviato {amount:.2f}€ a {to_name or contact['display_name']}.",
+            dedupe_key=f"p2p:sent:{p2p_id}",
+            payload={'p2p_id': p2p_id, 'amount': amount, 'contact_id': contact_id},
+        )
+        if contact['target_user_id']:
+            _ensure_user_settings(contact['target_user_id'])
+            _ensure_notification(
+                user_id=contact['target_user_id'],
+                type_='P2P_RECEIVED',
+                title='Hai ricevuto un trasferimento',
+                body=f"{session.get('display_name') or session.get('codice_cliente')} ti ha inviato {amount:.2f}€.",
+                dedupe_key=f"p2p:recv:{p2p_id}",
+                payload={'p2p_id': p2p_id, 'amount': amount, 'from_user': session.get('user_id')},
+            )
         return jsonify({"message": "ok", "p2p_id": p2p_id, "to_name": to_name, "amount": amount})
     except ValueError as e:
         return jsonify({"message": str(e)}), 400
 
 
 # --- REPORT HELPERS ---
-from datetime import datetime, timedelta
 
 def _date_from_months(months: int) -> str:
     """Ritorna la data (YYYY-MM-DD) spostata indietro di 'months' mesi circa (30 giorni * n)."""
