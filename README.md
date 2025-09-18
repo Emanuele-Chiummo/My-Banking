@@ -73,8 +73,8 @@ pip install -r requirements.txt
 ```bash
 flask --app app init-db
 flask --app app seed-demo
-flask --app app seed-demo-data
 ```
+Il comando `seed-demo` popola automaticamente utenti, conti, rubrica P2P e movimenti degli ultimi 12 mesi.
 ### 5. Avviare l’applicazione
 ```bash
 flask --app app run --debug
@@ -84,8 +84,8 @@ flask --app app run --debug
 - Documentazione API: http://127.0.0.1:5000/apidocs
 
 ### 🔑 Credenziali demo
-- Codice Cliente: 123456
-- Password: Password123!
+- Codice Cliente: 123456 — Password: Password123!
+- Codice Cliente: 654321 — Password: Password123!
 
 ## 📌 Attività future
  - Implementazione funzionalità trasferimento conto corrente - salvadanaio e viceversa

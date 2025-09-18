@@ -341,23 +341,24 @@ def inject_global_context():
     }
 
 # --- CLI Commands ---
-@app.cli.command("seed-demo-more-users")
-def seed_demo_more_users():
-    """
-    Crea altri utenti/conti di test e li aggiunge alla rubrica di USE001 per il P2P.
-    Utenti creati/aggiornati:
-      - USE002 Mario Rossi (ACC002)
-      - USE003 Lucia Bianchi (ACC003)
-      - USE004 Giuseppe Verdi (ACC004)
-      - USE005 Chiara Neri (ACC005)
-    """
+def _seed_additional_demo_users(*, owner_user_id: str, owner_account_id: str | None) -> list[str]:
+    """Ensure extra demo users, accounts and reciprocal contacts exist."""
     db = get_db()
+    owner = db.execute(
+        "SELECT user_id, first_name, last_name FROM users WHERE user_id = ?",
+        (owner_user_id,),
+    ).fetchone()
 
-    # Assicura l'utente principale (USE001) esista, servirà come "owner" rubrica
-    owner = db.execute("SELECT user_id, first_name, last_name FROM users WHERE user_id='USE001'").fetchone()
-    if not owner:
+    if not owner and owner_user_id == "USE001":
         _upsert_user("USE001", "123456", "Emanuele", "Chiummo")
-        owner = db.execute("SELECT user_id, first_name, last_name FROM users WHERE user_id='USE001'").fetchone()
+        owner = db.execute(
+            "SELECT user_id, first_name, last_name FROM users WHERE user_id = ?",
+            (owner_user_id,),
+        ).fetchone()
+
+    if not owner:
+        raise ValueError(f"Utente owner {owner_user_id} non trovato per il seeding demo.")
+
     owner_name = f"{owner['first_name']} {owner['last_name']}".strip()
 
     users = [
@@ -372,33 +373,40 @@ def seed_demo_more_users():
              acc="ACC005", iban="IT60X0542811101000000005005", acc_name="Conto Chiara",   balance=2100.00),
     ]
 
-    # Crea/aggiorna utenti e conti
     for u in users:
         _upsert_user(u["user_id"], u["codice"], u["first"], u["last"])
         _ensure_account(u["acc"], u["user_id"], u["iban"], u["acc_name"], "EUR", u["balance"])
 
-    # Aggiungi i nuovi utenti alla rubrica di USE001
     for u in users:
         display = f"{u['first']} {u['last']}"
-        _ensure_contact_for(owner_user_id="USE001",
+        _ensure_contact_for(owner_user_id=owner_user_id,
                             target_user_id=u["user_id"],
                             target_account_id=u["acc"],
                             display_name=display)
 
-
-    acc_001 = db.execute("""
-        SELECT account_id, name FROM accounts
-        WHERE user_id='USE001'
-        ORDER BY created_at DESC LIMIT 1
-    """).fetchone()
-    if acc_001:
+    if owner_account_id:
         for u in users:
             _ensure_contact_for(owner_user_id=u["user_id"],
-                                target_user_id="USE001",
-                                target_account_id=acc_001["account_id"],
+                                target_user_id=owner_user_id,
+                                target_account_id=owner_account_id,
                                 display_name=owner_name)
 
     db.commit()
+    return [u["user_id"] for u in users]
+
+
+@app.cli.command("seed-demo-more-users")
+def seed_demo_more_users():
+    """
+    Crea altri utenti/conti di test e li aggiunge alla rubrica di USE001 per il P2P.
+    Utenti creati/aggiornati:
+      - USE002 Mario Rossi (ACC002)
+      - USE003 Lucia Bianchi (ACC003)
+      - USE004 Giuseppe Verdi (ACC004)
+      - USE005 Chiara Neri (ACC005)
+    """
+    owner_user_id, owner_account_id, _piggy_id = _ensure_demo_entities()
+    _seed_additional_demo_users(owner_user_id=owner_user_id, owner_account_id=owner_account_id)
     print("✅ seed-demo-more-users: creati/aggiornati USE002..USE005, conti e rubrica aggiornata.")
 
 
@@ -416,23 +424,17 @@ def init_db_cmd():
 
 @app.cli.command("seed-demo")
 def seed_demo_cmd():
-    db = get_db()
-    user_id = "USE001"
-    codice_cliente = "123456"
-    first_name = "Emanuele"
-    last_name = "Chiummo"
-    password_hash = generate_password_hash("Password123!")
-    db.execute("""
-        INSERT INTO users (user_id, codice_cliente, first_name, last_name, password_hash)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(user_id) DO UPDATE SET
-          codice_cliente = excluded.codice_cliente,
-          first_name     = excluded.first_name,
-          last_name      = excluded.last_name,
-          password_hash  = excluded.password_hash
-    """, (user_id, codice_cliente, first_name, last_name, password_hash))
-    db.commit()
-    print("✅ Utente di test creato/aggiornato.")
+    user_id, account_id, piggy_id = _ensure_demo_entities()
+    extra_users = _seed_additional_demo_users(owner_user_id=user_id, owner_account_id=account_id)
+    stats = _seed_transactions_last_12_months(account_id=account_id, piggy_id=piggy_id)
+
+    test_users = [user_id]
+    if "USE002" in extra_users:
+        test_users.append("USE002")
+
+    print("✅ seed-demo: dataset demo completo rigenerato (utente principale, conti, rubrica, transazioni).")
+    print(f"   Conto {account_id}: saldo base ~€{stats['base_opening']:.0f}, saldo atteso €{stats['final_balance']:.2f}.")
+    print("   Utenti demo per test P2P: " + ", ".join(f"{uid}/Password123!" for uid in test_users) + ".")
 
 @app.cli.command("seed-demo-data")
 def seed_demo_data_cmd():
@@ -789,16 +791,13 @@ def _ensure_demo_entities():
     db.commit()
     return "USE001", "ACC001", "PIG001"
 
-@app.cli.command("seed-demo-12m")
-def seed_demo_12m():
+def _seed_transactions_last_12_months(*, account_id: str, piggy_id: str) -> dict[str, float]:
     """
-    Genera dati demo realistici per gli ultimi 12 mesi:
-    - Stipendio mensile, affitto, bollette, abbonamenti, spesa, ristoranti, carburante, shopping, viaggi stagionali.
-    - Accantonamento mensile nel salvadanaio (escluso dai report grazie a piggy_id).
+    Genera dati demo realistici per gli ultimi 12 mesi sull'account indicato
+    e restituisce informazioni riassuntive.
     """
     random.seed(42)  # riproducibilità
     db = get_db()
-    user_id, account_id, piggy_id = _ensure_demo_entities()
 
     # 1) Pulisci periodo target (ultimi 13 mesi per sicurezza)
     cutoff = (date.today().replace(day=1) - timedelta(days=370)).isoformat()
@@ -952,7 +951,19 @@ def seed_demo_12m():
     db.execute("UPDATE accounts SET balance = ? WHERE account_id = ?", (float(base_opening + net_flow), account_id))
     _recalc_piggy(piggy_id)
     db.commit()
-    print(f"✅ Dati demo ultimi 12 mesi generati su {account_id}. Saldo base ~{base_opening}€, piggy ricalcolato.")
+
+    return {
+        "base_opening": float(base_opening),
+        "final_balance": float(base_opening + net_flow),
+    }
+
+
+@app.cli.command("seed-demo-12m")
+def seed_demo_12m():
+    """Genera o rigenera un anno di movimenti demo per l'account principale."""
+    _user_id, account_id, piggy_id = _ensure_demo_entities()
+    stats = _seed_transactions_last_12_months(account_id=account_id, piggy_id=piggy_id)
+    print(f"✅ Dati demo ultimi 12 mesi generati su {account_id}. Saldo base ~€{stats['base_opening']:.0f}, piggy ricalcolato.")
 
 @app.cli.command("seed-demo-p2p")
 def seed_demo_p2p_cmd():
