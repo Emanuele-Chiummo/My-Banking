@@ -62,7 +62,8 @@ cd My-Banking
 
 ### 2. Creare l’ambiente virtuale
 ```bash
-python -m venv .venv.\.venv\Scripts\activate
+python -m venv .venv.
+\.venv\Scripts\activate
 ```
 ### 3. Installare le dipendenze
 ```bash
